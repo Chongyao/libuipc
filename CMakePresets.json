@@ -12,6 +12,7 @@
             "displayName": "base Configuration",
             "description": "Default build using Ninja generator",
             "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
                 "UIPC_USING_LOCAL_VCPKG": "ON",
                 "UIPC_BUILD_GUI": "OFF",
