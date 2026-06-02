@@ -45,7 +45,7 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
         SimplicialComplexIO io{pre_transform};
         auto                shirt_mesh = io.read(shirt_path.string());
         label_surface(shirt_mesh);
-        // mesh_partition(shirt_mesh, 16);
+        mesh_partition(shirt_mesh, 16);
 
         auto moduli = ElasticModuli2D::youngs_poisson(100.0_MPa, 0.49);
         nhs.apply_to(shirt_mesh, moduli, 2e2, 0.0002_m);
