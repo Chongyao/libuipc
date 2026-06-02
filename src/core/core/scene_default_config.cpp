@@ -25,6 +25,8 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("newton/semi_implicit/beta_tol", Float{1e-3});
 
     config.create("linear_system/tol_rate", Float{1e-3});
+    config.create("linear_system/block_diagonal_scaling/enable", IndexT{0});
+    config.create("linear_system/block_diagonal_scaling/eps", Float{1e-12});
 
     // default:
     //  - fused_pcg

@@ -34,6 +34,16 @@ void GlobalLinearSystem::do_build()
 
     m_impl.need_debug_dump =
         dump_linear_system_attr ? dump_linear_system_attr->view()[0] : false;
+
+    auto block_diag_scaling_attr =
+        world().scene().config().find<IndexT>("linear_system/block_diagonal_scaling/enable");
+    m_impl.block_diagonal_scaling_enabled =
+        block_diag_scaling_attr ? block_diag_scaling_attr->view()[0] != 0 : false;
+
+    auto block_diag_scaling_eps_attr =
+        world().scene().config().find<Float>("linear_system/block_diagonal_scaling/eps");
+    m_impl.block_diagonal_scaling_eps =
+        block_diag_scaling_eps_attr ? block_diag_scaling_eps_attr->view()[0] : 1e-12;
 }
 
 void GlobalLinearSystem::_dump_A_b()
@@ -226,6 +236,8 @@ void GlobalLinearSystem::Impl::build_linear_system()
 
     converter.ge2sym(triplet_A);
     converter.convert(triplet_A, bcoo_A);
+
+    apply_block_diagonal_scaling();
 
     _assemble_preconditioner();
 
@@ -430,6 +442,7 @@ void GlobalLinearSystem::Impl::solve_linear_system()
         info.m_b = b.cview();
         info.m_x = x.view();
         iterative_solver->solve(info);
+        unscale_solution();
         logger::info("Iterative linear solver iteration count: {}", info.m_iter_count);
     }
 }

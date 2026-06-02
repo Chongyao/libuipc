@@ -305,6 +305,7 @@ class GlobalLinearSystem : public SimSystem
         muda::DeviceDenseVector<Float>      b;
         muda::DeviceTripletMatrix<Float, 3> triplet_A;
         muda::DeviceBCOOMatrix<Float, 3>    bcoo_A;
+        muda::DeviceBuffer<Matrix3x3>       block_diag_scalings;
         muda::DeviceDenseMatrix<Float>      debug_A;  // dense A for debug
 
         Spmv                      spmver;
@@ -312,6 +313,8 @@ class GlobalLinearSystem : public SimSystem
 
         bool initialized = false;
         bool empty_system = true;
+        bool block_diagonal_scaling_enabled = false;
+        Float block_diagonal_scaling_eps    = 1e-12;
 
         void apply_preconditioner(muda::DenseVectorView<Float>  z,
                                   muda::CDenseVectorView<Float> r,
@@ -324,6 +327,8 @@ class GlobalLinearSystem : public SimSystem
 
         bool accuracy_statisfied(muda::DenseVectorView<Float> r);
         void compute_gradient(ComputeGradientInfo& info);
+        void apply_block_diagonal_scaling();
+        void unscale_solution();
 
         Float diag_norm();
         Float mass_norm();
