@@ -22,10 +22,11 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
     auto config                             = test::Scene::default_config();
     config["gravity"]                       = Vector3{0, -9.8, 0};
     config["contact"]["enable"]             = true;
+    config["contact"]["constitution"]       = "ipc";
     config["contact"]["friction"]["enable"] = false;
     config["contact"]["d_hat"]              = 0.001;
     config["line_search"]["max_iter"]       = 8;
-    config["linear_system"]["tol_rate"]     = 1e-3;
+    config["linear_system"]["tol_rate"]     = 1e-6;
     config["linear_system"]["block_diagonal_scaling"]["enable"] = 0;
     test::Scene::dump_config(config, output_path);
 
@@ -47,14 +48,14 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
         label_surface(shirt_mesh);
         mesh_partition(shirt_mesh, 16);
 
-        auto moduli = ElasticModuli2D::youngs_poisson(100.0_MPa, 0.49);
+        auto moduli = ElasticModuli2D::youngs_poisson(1.0_MPa, 0.49);
         nhs.apply_to(shirt_mesh, moduli, 2e2, 0.0002_m);
         default_contact.apply_to(shirt_mesh);
 
-        // Keep cloth-ground contact, but avoid expensive cloth self-collision for this demo.
+        // Keep both cloth-ground contact and cloth self-collision for profiling.
         auto self_collision = shirt_mesh.meta().find<IndexT>(builtin::self_collision);
         REQUIRE(self_collision);
-        view(*self_collision)[0] = 0;
+        view(*self_collision)[0] = 1;
 
         auto shirt_object = scene.objects().create("shirt");
         shirt_object->geometries().create(shirt_mesh);
