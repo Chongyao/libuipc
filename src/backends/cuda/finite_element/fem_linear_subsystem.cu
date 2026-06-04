@@ -11,6 +11,7 @@
 #include <finite_element/fem_dytopo_effect_receiver.h>
 #include <uipc/builtin/attribute_name.h>
 #include <uipc/common/flag.h>
+#include <uipc/common/timer.h>
 #include <utils/report_extent_check.h>
 
 namespace uipc::backend::cuda
@@ -165,13 +166,17 @@ void FEMLinearSubsystem::Impl::assemble(GlobalLinearSystem::DiagInfo& info)
     auto frame = sim_engine->frame();
     fem().set_dof_info(frame, info.gradients().offset(), info.gradients().size());
 
-    // 1) Prepare Gradient Buffer
-    kinetic_gradients.resize_doublets(fem().xs.size());
-    kinetic_gradients.reshape(fem().xs.size());
-    loose_resize_entries(reporter_gradients, reporter_gradient_offsets_counts.total_count());
-    reporter_gradients.reshape(fem().xs.size());
+    {
+        Timer timer{"FEM Prepare Buffers"};
+        // 1) Prepare Gradient Buffer
+        kinetic_gradients.resize_doublets(fem().xs.size());
+        kinetic_gradients.reshape(fem().xs.size());
+        loose_resize_entries(reporter_gradients,
+                             reporter_gradient_offsets_counts.total_count());
+        reporter_gradients.reshape(fem().xs.size());
 
-    info.gradients().buffer_view().fill(0);
+        info.gradients().buffer_view().fill(0);
+    }
 
     // 2) Assemble Gradient and Hessian
     bool has_complement =
@@ -180,13 +185,20 @@ void FEMLinearSubsystem::Impl::assemble(GlobalLinearSystem::DiagInfo& info)
     IndexT hess_offset = 0;
     if(has_complement)
     {
-        _assemble_kinetic(hess_offset, info);
-        _assemble_reporters(hess_offset, info);
+        {
+            Timer timer{"FEM Assemble Kinetic"};
+            _assemble_kinetic(hess_offset, info);
+        }
+        {
+            Timer timer{"FEM Assemble Reporters"};
+            _assemble_reporters(hess_offset, info);
+        }
     }
 
     if(dytopo_effect_receiver)  // if dytopo_effect enabled
     {
         // DyTopo System will decide the `component_flags` itself
+        Timer timer{"FEM Assemble DyTopo Effect"};
         _assemble_dytopo_effect(hess_offset, info);
     }
 
@@ -196,39 +208,45 @@ void FEMLinearSubsystem::Impl::assemble(GlobalLinearSystem::DiagInfo& info)
                 hess_offset);
 
 
-    // 3) Clear Fixed Vertex gradient (double check)
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(fem().xs.size(),
-               [is_fixed = fem().is_fixed.cviewer().name("is_fixed"),
-                gradients = info.gradients().viewer().name("gradients")] __device__(int i) mutable
-               {
-                   if(is_fixed(i))
+    {
+        Timer timer{"FEM Clear Fixed Vertex Gradient"};
+        // 3) Clear Fixed Vertex gradient (double check)
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(fem().xs.size(),
+                   [is_fixed = fem().is_fixed.cviewer().name("is_fixed"),
+                    gradients = info.gradients().viewer().name("gradients")] __device__(int i) mutable
                    {
-                       gradients.segment<3>(i * 3).as_eigen().setZero();
-                   }
-               });
+                       if(is_fixed(i))
+                       {
+                           gradients.segment<3>(i * 3).as_eigen().setZero();
+                       }
+                   });
+    }
 
     if(info.gradient_only())
         return;
 
-    // 4) Clear Fixed Vertex hessian
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(info.hessians().triplet_count(),
-               [is_fixed = fem().is_fixed.cviewer().name("is_fixed"),
-                hessians = info.hessians().viewer().name("hessians")] __device__(int I) mutable
-               {
-                   auto&& [i, j, H3] = hessians(I).read();
-
-                   if(is_fixed(i) || is_fixed(j))
+    {
+        Timer timer{"FEM Clear Fixed Vertex Hessian"};
+        // 4) Clear Fixed Vertex hessian
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(info.hessians().triplet_count(),
+                   [is_fixed = fem().is_fixed.cviewer().name("is_fixed"),
+                    hessians = info.hessians().viewer().name("hessians")] __device__(int I) mutable
                    {
-                       if(i != j)
-                           hessians(I).write(i, j, Matrix3x3::Zero());
-                       else
-                           hessians(I).write(i, j, Matrix3x3::Identity());
-                   }
-               });
+                       auto&& [i, j, H3] = hessians(I).read();
+
+                       if(is_fixed(i) || is_fixed(j))
+                       {
+                           if(i != j)
+                               hessians(I).write(i, j, Matrix3x3::Zero());
+                           else
+                               hessians(I).write(i, j, Matrix3x3::Identity());
+                       }
+                   });
+    }
 }
 
 
@@ -243,22 +261,28 @@ void FEMLinearSubsystem::Impl::_assemble_kinetic(IndexT& hess_offset,
     auto gradient_view = kinetic_gradients.view();
     auto hessian_view  = info.hessians().subview(hess_offset, hess_count);
 
-    FEMLinearSubsystem::ComputeGradientHessianInfo kinetic_info{
-        info.gradient_only(), gradient_view, hessian_view, dt_attr->view()[0]};
-    kinetic->compute_gradient_hessian(kinetic_info);
+    {
+        Timer timer{"FEM Kinetic Compute Gradient Hessian"};
+        FEMLinearSubsystem::ComputeGradientHessianInfo kinetic_info{
+            info.gradient_only(), gradient_view, hessian_view, dt_attr->view()[0]};
+        kinetic->compute_gradient_hessian(kinetic_info);
+    }
 
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(kinetic_gradients.doublet_count(),
-               [dst = info.gradients().viewer().name("dst_gradient"),
-                src = kinetic_gradients.cviewer().name("src_gradient"),
-                is_fixed = fem().is_fixed.cviewer().name("is_fixed")] __device__(int I) mutable
-               {
-                   auto&& [i, G3] = src(I);
-                   if(is_fixed(i))
-                       return;
-                   dst.segment<3>(i * 3).atomic_add(G3);
-               });
+    {
+        Timer timer{"FEM Kinetic Scatter Gradient"};
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(kinetic_gradients.doublet_count(),
+                   [dst = info.gradients().viewer().name("dst_gradient"),
+                    src = kinetic_gradients.cviewer().name("src_gradient"),
+                    is_fixed = fem().is_fixed.cviewer().name("is_fixed")] __device__(int I) mutable
+                   {
+                       auto&& [i, G3] = src(I);
+                       if(is_fixed(i))
+                           return;
+                       dst.segment<3>(i * 3).atomic_add(G3);
+                   });
+    }
 
     hess_offset += hess_count;
 }
@@ -274,24 +298,31 @@ void FEMLinearSubsystem::Impl::_assemble_reporters(IndexT& hess_offset,
     // Let reporters assemble their gradient and hessian
     auto reporter_gradient_view = reporter_gradients.view();
     auto reporter_hessian_view = info.hessians().subview(hess_offset, hess_count);
-    for(auto& R : reporters.view())
     {
-        AssembleInfo assemble_info{this, R->m_index, reporter_hessian_view, info.gradient_only()};
-        R->assemble(assemble_info);
+        Timer timer{"FEM Reporter Compute Gradient Hessian"};
+        for(auto& R : reporters.view())
+        {
+            AssembleInfo assemble_info{
+                this, R->m_index, reporter_hessian_view, info.gradient_only()};
+            R->assemble(assemble_info);
+        }
     }
 
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(reporter_gradients.doublet_count(),
-               [dst = info.gradients().viewer().name("dst_gradient"),
-                src = reporter_gradients.cviewer().name("src_gradient"),
-                is_fixed = fem().is_fixed.cviewer().name("is_fixed")] __device__(int I) mutable
-               {
-                   auto&& [i, G3] = src(I);
-                   if(is_fixed(i))
-                       return;
-                   dst.segment<3>(i * 3).atomic_add(G3);
-               });
+    {
+        Timer timer{"FEM Reporter Scatter Gradient"};
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(reporter_gradients.doublet_count(),
+                   [dst = info.gradients().viewer().name("dst_gradient"),
+                    src = reporter_gradients.cviewer().name("src_gradient"),
+                    is_fixed = fem().is_fixed.cviewer().name("is_fixed")] __device__(int I) mutable
+                   {
+                       auto&& [i, G3] = src(I);
+                       if(is_fixed(i))
+                           return;
+                       dst.segment<3>(i * 3).atomic_add(G3);
+                   });
+    }
 
     // offset update
     hess_offset += hess_count;
@@ -308,6 +339,7 @@ void FEMLinearSubsystem::Impl::_assemble_dytopo_effect(IndexT& hess_offset,
     // 1) Assemble DyTopoEffect Gradient to Gradient
     if(grad_count)
     {
+        Timer timer{"FEM DyTopo Scatter Gradient"};
         ParallelFor()
             .file_line(__FILE__, __LINE__)
             .apply(grad_count,
@@ -340,6 +372,7 @@ void FEMLinearSubsystem::Impl::_assemble_dytopo_effect(IndexT& hess_offset,
 
         // NOTE: We don't consider fixed vertex here,
         // because in final phase we willclear the fixed vertex hessian anyway.
+        Timer timer{"FEM DyTopo Scatter Hessian"};
         ParallelFor()
             .file_line(__FILE__, __LINE__)
             .apply(hess_count,

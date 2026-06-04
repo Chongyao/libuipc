@@ -9,6 +9,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <fmt/format.h>
 #include <uipc/common/json.h>
+#include <uipc/common/timer.h>
 #include <fstream>
 #include <vector>
 
@@ -712,12 +713,18 @@ void MASPreconditionerEngine::set_preconditioner(muda::CBufferView<Eigen::Matrix
     if(m_total_nodes < 1)
         return;
 
-    // 1. Restore neighbor data for this iteration
-    neighbor_lists.view().copy_from(neighbor_lists_init.view());
-    neighbor_nums.view().copy_from(neighbor_nums_init.view());
+    {
+        Timer timer{"MAS Restore Neighbor Data"};
+        // 1. Restore neighbor data for this iteration
+        neighbor_lists.view().copy_from(neighbor_lists_init.view());
+        neighbor_nums.view().copy_from(neighbor_nums_init.view());
+    }
 
-    // 2. Rebuild multi-level hierarchy
-    reorder_realtime(cp_num);
+    {
+        Timer timer{"MAS Reorder Realtime Hierarchy"};
+        // 2. Rebuild multi-level hierarchy
+        reorder_realtime(cp_num);
+    }
 
     // 3. Resize cluster matrices if needed
     int num_cluster_blocks = m_total_num_clusters / BANKSIZE;
@@ -737,13 +744,23 @@ void MASPreconditionerEngine::set_preconditioner(muda::CBufferView<Eigen::Matrix
         multi_level_Z.resize(m_total_num_clusters);
     }
 
-    cluster_hessians.view(0, num_cluster_blocks).fill(ClusterMatrixSym{});
+    {
+        Timer timer{"MAS Clear Cluster Hessians"};
+        cluster_hessians.view(0, num_cluster_blocks).fill(ClusterMatrixSym{});
+    }
 
-    // 5. Scatter BCOO Hessian blocks into cluster matrices
-    scatter_hessian_to_clusters(triplet_values, row_ids, col_ids, indices, dof_offset);
+    {
+        Timer timer{"MAS Scatter Hessian To Clusters"};
+        // 5. Scatter BCOO Hessian blocks into cluster matrices
+        scatter_hessian_to_clusters(
+            triplet_values, row_ids, col_ids, indices, dof_offset);
+    }
 
-    // 6. Invert each cluster matrix (Gauss-Jordan)
-    invert_cluster_matrices();
+    {
+        Timer timer{"MAS Invert Cluster Matrices"};
+        // 6. Invert each cluster matrix (Gauss-Jordan)
+        invert_cluster_matrices();
+    }
 }
 
 // ---------------------------------------------------------------------------

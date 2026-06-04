@@ -1,9 +1,7 @@
 #include <app/app.h>
 #include <uipc/uipc.h>
 #include <uipc/constitution/neo_hookean_shell.h>
-#include <uipc/common/timer.h>
 #include <chrono>
-#include <fstream>
 
 // Test: Read a shirt cloth mesh from OBJ and let it fall onto an implicit ground.
 TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
@@ -76,10 +74,6 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
     constexpr int ProfileFrames = 80;
     double        simulation_seconds = 0.0;
 
-    Timer::enable_all();
-    GlobalTimer profile_timer{"94_fem_shirt_ground"};
-    profile_timer.set_as_current();
-
     while(world.frame() < ProfileFrames)
     {
         auto frame_begin = std::chrono::high_resolution_clock::now();
@@ -95,8 +89,6 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
             fmt::format("{}scene_surface{}.obj", output_path, world.frame()));
     }
 
-    Timer::disable_all();
-
     const double dt                = config["dt"].get<double>();
     const double simulated_seconds = ProfileFrames * dt;
     const double step_fps          = ProfileFrames / simulation_seconds;
@@ -110,11 +102,4 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
                  realtime_factor,
                  simulated_seconds,
                  simulation_seconds);
-
-    profile_timer.print_merged_timings();
-
-    const auto timer_path = fmt::format("{}timer_94.json", output_path);
-    std::ofstream ofs{timer_path};
-    ofs << profile_timer.report_merged_as_json().dump(2);
-    logger::info("Timer profile saved to {}", timer_path);
 }

@@ -224,7 +224,10 @@ void GlobalLinearSystem::Impl::init()
 void GlobalLinearSystem::Impl::build_linear_system()
 {
     Timer timer{"Build Linear System"};
-    empty_system = !_update_subsystem_extent();
+    {
+        Timer timer{"Update Subsystem Extent"};
+        empty_system = !_update_subsystem_extent();
+    }
 
     if(empty_system) [[unlikely]]
     {
@@ -232,14 +235,30 @@ void GlobalLinearSystem::Impl::build_linear_system()
         return;
     }
 
-    _assemble_linear_system();
+    {
+        Timer timer{"Assemble Linear System"};
+        _assemble_linear_system();
+    }
 
-    converter.ge2sym(triplet_A);
-    converter.convert(triplet_A, bcoo_A);
+    {
+        Timer timer{"GE To Symmetric Triplets"};
+        converter.ge2sym(triplet_A);
+    }
 
-    apply_block_diagonal_scaling();
+    {
+        Timer timer{"Convert Triplets To BCOO"};
+        converter.convert(triplet_A, bcoo_A);
+    }
 
-    _assemble_preconditioner();
+    {
+        Timer timer{"Apply Block Diagonal Scaling"};
+        apply_block_diagonal_scaling();
+    }
+
+    {
+        Timer timer{"Assemble Preconditioner"};
+        _assemble_preconditioner();
+    }
 
     logger::info("GlobalLinearSystem has {} DoFs, Unique Triplet Count: {}",
                  b.size(),
@@ -336,13 +355,19 @@ void GlobalLinearSystem::Impl::_assemble_linear_system()
 {
     auto HA = triplet_A.view();
 
-    // Clear and invalidate previous values
-    triplet_A.values().fill(Matrix3x3::Zero());
-    triplet_A.row_indices().fill(-1);
-    triplet_A.col_indices().fill(-1);
+    {
+        Timer timer{"Clear Triplet Matrix"};
+        // Clear and invalidate previous values
+        triplet_A.values().fill(Matrix3x3::Zero());
+        triplet_A.row_indices().fill(-1);
+        triplet_A.col_indices().fill(-1);
+    }
 
     auto B = b.view();
-    B.buffer_view().fill(0.0);
+    {
+        Timer timer{"Clear RHS Vector"};
+        B.buffer_view().fill(0.0);
+    }
 
     auto diag_subsystem_view     = diag_subsystems.view();
     auto off_diag_subsystem_view = off_diag_subsystems.view();
@@ -376,7 +401,10 @@ void GlobalLinearSystem::Impl::_assemble_linear_system()
                                          subsystem_triplet_counts[triplet_i])
                                   .submatrix(ij_offset, ij_count);
 
-            diag_subsystem->assemble(info);
+            {
+                Timer timer{"Assemble Diag Subsystem"};
+                diag_subsystem->assemble(info);
+            }
         }
         else
         {
@@ -413,7 +441,10 @@ void GlobalLinearSystem::Impl::_assemble_linear_system()
 
             // logger::info("rl_offset: {}, lr_offset: {}", rl_triplet_offset, lr_triplet_offset);
 
-            off_diag_subsystem->assemble(info);
+            {
+                Timer timer{"Assemble OffDiag Subsystem"};
+                off_diag_subsystem->assemble(info);
+            }
         }
     }
 }
@@ -423,12 +454,14 @@ void GlobalLinearSystem::Impl::_assemble_preconditioner()
     if(global_preconditioner)
     {
         GlobalPreconditionerAssemblyInfo info{this};
+        Timer timer{"Assemble Global Preconditioner"};
         global_preconditioner->assemble(info);
     }
 
     for(auto&& preconditioner : local_preconditioners.view())
     {
         LocalPreconditionerAssemblyInfo info{this, preconditioner->m_subsystem->m_index};
+        Timer timer{"Assemble Local Preconditioner"};
         preconditioner->assemble(info);
     }
 }

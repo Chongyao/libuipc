@@ -12,6 +12,7 @@
 #include <diff_sim/global_diff_sim_manager.h>
 #include <newton_tolerance/newton_tolerance_manager.h>
 #include <time_integrator/time_integrator_manager.h>
+#include <cstdlib>
 
 namespace uipc::backend::cuda
 {
@@ -439,7 +440,18 @@ void SimEngine::advance()
 
     try
     {
-        pipeline();
+        if(std::getenv("UIPC_ENABLE_TIMING"))
+        {
+            Timer::enable_all();
+            pipeline();
+            Timer::report(std::cout);
+            Timer::disable_all();
+        }
+        else
+        {
+            Timer::disable_all();
+            pipeline();
+        }
     }
     catch(const SimEngineException& e)
     {

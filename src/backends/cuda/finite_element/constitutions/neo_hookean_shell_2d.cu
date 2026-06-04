@@ -7,6 +7,7 @@
 #include <utils/codim_thickness.h>
 #include <utils/make_spd.h>
 #include <utils/matrix_assembler.h>
+#include <uipc/common/timer.h>
 
 namespace uipc::backend::cuda
 {
@@ -26,6 +27,7 @@ class NeoHookeanShell2D final : public Codim2DConstitution
     muda::DeviceBuffer<Float>     lambdas;
     muda::DeviceBuffer<Float>     mus;
     muda::DeviceBuffer<Matrix2x2> inv_B_matrices;
+    muda::DeviceBuffer<Matrix9x9> raw_hessians;
 
     SimSystemSlot<FiniteElementMethod> fem;
 
@@ -81,6 +83,7 @@ class NeoHookeanShell2D final : public Codim2DConstitution
         auto x_bars = fem->x_bars();
 
         inv_B_matrices.resize(N);
+        raw_hessians.resize(N);
 
         // Precompute inverse of rest shape matrix for each triangle
         using namespace muda;
@@ -160,56 +163,89 @@ class NeoHookeanShell2D final : public Codim2DConstitution
         using namespace muda;
         namespace NH = sym::neo_hookean_shell_2d;
 
-        ParallelFor()
-            .file_line(__FILE__, __LINE__)
-            .apply(info.indices().size(),
-                   [lambdas = lambdas.cviewer().name("lambdas"),
-                    mus     = mus.cviewer().name("mus"),
-                    indices = info.indices().viewer().name("indices"),
-                    xs      = info.xs().viewer().name("xs"),
-                    IBs     = inv_B_matrices.cviewer().name("IBs"),
-                    thicknesses = info.thicknesses().viewer().name("thicknesses"),
-                    G3s        = info.gradients().viewer().name("gradients"),
-                    H3x3s      = info.hessians().viewer().name("hessians"),
-                    rest_areas = info.rest_areas().viewer().name("volumes"),
-                    dt         = info.dt(),
-                    half_hessian_size = HalfHessianSize,
-                    gradient_only = info.gradient_only()] __device__(int I) mutable
-                   {
-                       Vector9  X;
-                       Vector3i idx = indices(I);
-                       for(int i = 0; i < 3; ++i)
-                           X.segment<3>(3 * i) = xs(idx(i));
+        {
+            Timer timer{"NeoHookeanShell2D Compute Gradient Raw Hessian"};
+            ParallelFor()
+                .file_line(__FILE__, __LINE__)
+                .apply(info.indices().size(),
+                       [lambdas = lambdas.cviewer().name("lambdas"),
+                        mus     = mus.cviewer().name("mus"),
+                        indices = info.indices().viewer().name("indices"),
+                        xs      = info.xs().viewer().name("xs"),
+                        IBs     = inv_B_matrices.cviewer().name("IBs"),
+                        thicknesses = info.thicknesses().viewer().name("thicknesses"),
+                        G3s        = info.gradients().viewer().name("gradients"),
+                        raw_Hs     = raw_hessians.viewer().name("raw_hessians"),
+                        rest_areas = info.rest_areas().viewer().name("volumes"),
+                        dt         = info.dt(),
+                        gradient_only = info.gradient_only()] __device__(int I) mutable
+                       {
+                           Vector9  X;
+                           Vector3i idx = indices(I);
+                           for(int i = 0; i < 3; ++i)
+                               X.segment<3>(3 * i) = xs(idx(i));
 
-                       Matrix2x2 IB = IBs(I);
+                           Matrix2x2 IB = IBs(I);
 
-                       Float lambda    = lambdas(I);
-                       Float mu        = mus(I);
-                       Float rest_area = rest_areas(I);
-                       Float thickness = triangle_thickness(thicknesses(idx(0)),
-                                                            thicknesses(idx(1)),
-                                                            thicknesses(idx(2)));
+                           Float lambda    = lambdas(I);
+                           Float mu        = mus(I);
+                           Float rest_area = rest_areas(I);
+                           Float thickness =
+                               triangle_thickness(thicknesses(idx(0)),
+                                                  thicknesses(idx(1)),
+                                                  thicknesses(idx(2)));
 
-                       // thickness is one-sided so we multiply by 2
-                       Float Vdt2 = rest_area * 2 * thickness * dt * dt;
+                           // thickness is one-sided so we multiply by 2
+                           Float Vdt2 = rest_area * 2 * thickness * dt * dt;
 
-                       Vector9 G;
-                       NH::dEdX(G, lambda, mu, X, IB);
-                       G *= Vdt2;
-                       DoubletVectorAssembler DVA{G3s};
-                       DVA.segment<StencilSize>(I * StencilSize).write(idx, G);
+                           Vector9 G;
+                           NH::dEdX(G, lambda, mu, X, IB);
+                           G *= Vdt2;
+                           DoubletVectorAssembler DVA{G3s};
+                           DVA.segment<StencilSize>(I * StencilSize).write(idx, G);
 
-                       if(gradient_only)
-                           return;
+                           if(gradient_only)
+                               return;
 
-                       Matrix9x9 H;
-                       NH::ddEddX(H, lambda, mu, X, IB);
-                       make_spd(H);
-                       H *= Vdt2;
+                           Matrix9x9 H;
+                           NH::ddEddX(H, lambda, mu, X, IB);
+                           H *= Vdt2;
+                           raw_Hs(I) = H;
+                       });
+        }
 
-                       TripletMatrixAssembler TMA{H3x3s};
-                       TMA.half_block<StencilSize>(I * half_hessian_size).write(idx, H);
-                   });
+        if(info.gradient_only())
+            return;
+
+        {
+            Timer timer{"NeoHookeanShell2D Hessian SPD Projection"};
+            ParallelFor()
+                .file_line(__FILE__, __LINE__)
+                .apply(info.indices().size(),
+                       [raw_Hs = raw_hessians.viewer().name("raw_hessians")] __device__(int I) mutable
+                       {
+                           auto H = raw_Hs(I);
+                           make_spd(H);
+                           raw_Hs(I) = H;
+                       });
+        }
+
+        {
+            Timer timer{"NeoHookeanShell2D Assemble Projected Hessian"};
+            ParallelFor()
+                .file_line(__FILE__, __LINE__)
+                .apply(info.indices().size(),
+                       [indices = info.indices().viewer().name("indices"),
+                        H3x3s = info.hessians().viewer().name("hessians"),
+                        raw_Hs = raw_hessians.cviewer().name("raw_hessians"),
+                        half_hessian_size = HalfHessianSize] __device__(int I) mutable
+                       {
+                           Vector3i idx = indices(I);
+                           TripletMatrixAssembler TMA{H3x3s};
+                           TMA.half_block<StencilSize>(I * half_hessian_size)
+                               .write(idx, raw_Hs(I));
+                       });
+        }
     }
 };
 

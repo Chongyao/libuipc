@@ -13,6 +13,7 @@
 #include <newton_tolerance/newton_tolerance_manager.h>
 #include <time_integrator/time_integrator_manager.h>
 #include <active_set_system/global_active_set_manager.h>
+#include <cstdlib>
 
 namespace uipc::backend::cuda
 {
@@ -171,18 +172,12 @@ void SimEngine::advance_AL()
         return true;
     };
 
-    auto convergence_check = [&](SizeT newton_iter) -> bool
+    auto al_convergence_check = [&]() -> bool
     {
         if(m_dump_surface->view()[0])
         {
             dump_global_surface();
         }
-
-        // NewtonToleranceManager::ResultInfo result_info;
-        // result_info.frame(m_current_frame);
-        // result_info.newton_iter(newton_iter);
-        // m_newton_tolerance_manager->check(result_info);
-
 
         if(!animation_reach_target())
             return false;
@@ -339,14 +334,14 @@ void SimEngine::advance_AL()
                     m_global_linear_system->solve();
                 }
 
+                // 5) Collect Vertex Displacements Globally
+                m_global_vertex_manager->collect_vertex_displacements();
+
                 NewtonToleranceManager::ResultInfo result_info;
                 result_info.frame(m_current_frame);
                 result_info.newton_iter(newton_iter);
                 m_newton_tolerance_manager->check(result_info);
                 bool newton_converged = result_info.converged();
-
-                // 5) Collect Vertex Displacements Globally
-                m_global_vertex_manager->collect_vertex_displacements();
 
                 // 6) Begin Line Search
                 m_state = SimEngineState::LineSearch;
@@ -417,9 +412,9 @@ void SimEngine::advance_AL()
                 // Update alpha and beta for next iteration
                 beta = beta + (1 - beta) * alpha;
 
-                bool converged = convergence_check(newton_iter);
+                bool al_converged = al_convergence_check();
                 bool terminated =
-                    converged && (newton_iter + 1 >= newton_min_iter || newton_converged);
+                    al_converged && newton_converged && (newton_iter >= newton_min_iter);
 
                 if(terminated)
                     break;
@@ -445,9 +440,18 @@ void SimEngine::advance_AL()
 
     try
     {
-        Timer::enable_all();
-        pipeline();
-        Timer::report(std::cout);
+        if(std::getenv("UIPC_ENABLE_TIMING"))
+        {
+            Timer::enable_all();
+            pipeline();
+            Timer::report(std::cout);
+            Timer::disable_all();
+        }
+        else
+        {
+            Timer::disable_all();
+            pipeline();
+        }
     }
     catch(const SimEngineException& e)
     {

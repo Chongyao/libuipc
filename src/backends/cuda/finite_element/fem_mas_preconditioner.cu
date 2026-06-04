@@ -9,6 +9,7 @@
 #include <uipc/builtin/attribute_name.h>
 #include <uipc/geometry/simplicial_complex.h>
 #include <uipc/common/log.h>
+#include <uipc/common/timer.h>
 #include <backends/common/backend_path_tool.h>
 #include <sim_engine.h>
 #include <set>
@@ -399,14 +400,20 @@ class FEMMASPreconditioner : public LocalPreconditioner
 
         auto triplet_count = A.triplet_count();
 
-        // MAS assembly for partitioned vertices
-        fill_identity_indices(sorted_indices, triplet_count);
-        engine.set_preconditioner(A.values(),
-                                  A.row_indices(),
-                                  A.col_indices(),
-                                  sorted_indices.view(),
-                                  dof_offset / 3,
-                                  0);
+        {
+            Timer timer{"FEMMAS Fill Identity Indices"};
+            // MAS assembly for partitioned vertices
+            fill_identity_indices(sorted_indices, triplet_count);
+        }
+        {
+            Timer timer{"FEMMAS Set Preconditioner"};
+            engine.set_preconditioner(A.values(),
+                                      A.row_indices(),
+                                      A.col_indices(),
+                                      sorted_indices.view(),
+                                      dof_offset / 3,
+                                      0);
+        }
 
         auto dump_mas = world().scene().config().find<IndexT>("extras/debug/dump_mas_matrices");
         if(dump_mas && dump_mas->view()[0] != 0)
@@ -422,6 +429,7 @@ class FEMMASPreconditioner : public LocalPreconditioner
         // Diagonal fallback assembly for unpartitioned vertices
         if(m_has_unpartitioned)
         {
+            Timer timer{"FEMMAS Diagonal Fallback Assembly"};
             SizeT num_verts        = finite_element_method->xs().size();
             int   fem_block_offset = dof_offset / 3;
             int   fem_block_count  = static_cast<int>(info.dof_count()) / 3;

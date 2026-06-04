@@ -1,10 +1,8 @@
 #include <app/app.h>
 #include <uipc/uipc.h>
 #include <uipc/constitution/neo_hookean_shell.h>
-#include <uipc/common/timer.h>
 #include <chrono>
 #include <cstdlib>
-#include <fstream>
 
 // Test: Cloth (2D triangle mesh) with MAS preconditioner.
 // A sheet of cloth fixed at two corners, sagging under gravity.
@@ -106,10 +104,6 @@ TEST_CASE("60_fem_mas_cloth", "[fem][mas]")
 
     double simulation_seconds = 0.0;
 
-    Timer::enable_all();
-    GlobalTimer profile_timer{"60_fem_mas_cloth"};
-    profile_timer.set_as_current();
-
     while(world.frame() < ProfileFrames)
     {
         auto frame_begin = std::chrono::high_resolution_clock::now();
@@ -124,8 +118,6 @@ TEST_CASE("60_fem_mas_cloth", "[fem][mas]")
         sio.write_surface(
             fmt::format("{}scene_surface{}.obj", output_path, world.frame()));
     }
-
-    Timer::disable_all();
 
     const double dt                = config["dt"].get<double>();
     const double simulated_seconds = ProfileFrames * dt;
@@ -143,11 +135,4 @@ TEST_CASE("60_fem_mas_cloth", "[fem][mas]")
                  realtime_factor,
                  simulated_seconds,
                  simulation_seconds);
-
-    profile_timer.print_merged_timings();
-
-    const auto timer_path = fmt::format("{}timer_60.json", output_path);
-    std::ofstream ofs{timer_path};
-    ofs << profile_timer.report_merged_as_json().dump(2);
-    logger::info("Timer profile saved to {}", timer_path);
 }
