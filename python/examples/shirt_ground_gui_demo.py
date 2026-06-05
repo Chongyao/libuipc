@@ -51,6 +51,9 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["friction"]["enable"] = False
     config["contact"]["d_hat"] = args.d_hat
     config["line_search"]["max_iter"] = args.line_search_max_iter
+    config["newton"]["max_iter"] = args.newton_max_iter
+    config["newton"]["min_iter"] = args.newton_min_iter
+    config["newton"]["velocity_tol"] = args.newton_velocity_tol
     config["linear_system"]["tol_rate"] = args.linear_tol
     config["linear_system"]["block_diagonal_scaling"]["enable"] = int(args.block_diagonal_scaling)
 
@@ -151,6 +154,10 @@ def run_gui(args: argparse.Namespace):
         psim.TextUnformatted("94_fem_shirt_ground")
         psim.TextUnformatted(f"Frame: {world.frame()}")
         psim.TextUnformatted(f"Contact: {args.contact}")
+        psim.TextUnformatted(
+            f"Newton iter: [{args.newton_min_iter}, {args.newton_max_iter}], "
+            f"velocity tol: {args.newton_velocity_tol:.3e}"
+        )
         psim.TextUnformatted(f"Step FPS: {state['fps']:.3f}")
         psim.TextUnformatted(f"Step time: {state['step_ms']:.3f} ms")
 
@@ -173,6 +180,9 @@ def parse_args():
     parser.add_argument("--thickness", type=float, default=0.0002)
     parser.add_argument("--d-hat", type=float, default=0.001)
     parser.add_argument("--line-search-max-iter", type=int, default=8)
+    parser.add_argument("--newton-max-iter", type=int, default=1024)
+    parser.add_argument("--newton-min-iter", type=int, default=1)
+    parser.add_argument("--newton-velocity-tol", type=float, default=0.05)
     parser.add_argument("--linear-tol", type=float, default=1.0e-6)
     parser.add_argument("--block-diagonal-scaling", action="store_true")
     parser.add_argument("--edge-width", type=float, default=0.6)
