@@ -66,6 +66,9 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["enable"] = int(args.contact_enable)
     config["contact"]["constitution"] = args.contact
     config["contact"]["friction"]["enable"] = False
+    config["newton"]["max_iter"] = args.newton_max_iter
+    config["newton"]["min_iter"] = args.newton_min_iter
+    config["newton"]["velocity_tol"] = args.newton_velocity_tol
     config["linear_system"]["tol_rate"] = args.linear_tol
     config["linear_system"]["block_diagonal_scaling"]["enable"] = int(args.block_diagonal_scaling)
 
@@ -153,6 +156,10 @@ def run_gui(args: argparse.Namespace):
         psim.TextUnformatted(f"N: {args.n}")
         psim.TextUnformatted(f"Contact: {args.contact if args.contact_enable else 'off'}")
         psim.TextUnformatted(f"MAS: {'on' if args.mas else 'off'}")
+        psim.TextUnformatted(
+            f"Newton iter: [{args.newton_min_iter}, {args.newton_max_iter}], "
+            f"velocity tol: {args.newton_velocity_tol:.3e}"
+        )
         psim.TextUnformatted(f"Step FPS: {state['fps']:.3f}")
         psim.TextUnformatted(f"Step time: {state['step_ms']:.3f} ms")
 
@@ -171,6 +178,9 @@ def parse_args():
     parser.add_argument("--part-size", type=int, default=16)
     parser.add_argument("--young", type=float, default=1.0e6)
     parser.add_argument("--poisson", type=float, default=0.49)
+    parser.add_argument("--newton-max-iter", type=int, default=1024)
+    parser.add_argument("--newton-min-iter", type=int, default=1)
+    parser.add_argument("--newton-velocity-tol", type=float, default=0.05)
     parser.add_argument("--linear-tol", type=float, default=1.0e-3)
     parser.add_argument("--block-diagonal-scaling", action="store_true")
     parser.add_argument("--run", action="store_true", help="start simulation immediately")
