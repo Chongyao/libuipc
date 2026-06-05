@@ -17,5 +17,7 @@ enum class SimEngineState
 
     AdvanceNonPenetrate,  // AL-IPC
     RecoverNonPenetrate,  // AL-IPC
+
+    TWP,
 };
 }

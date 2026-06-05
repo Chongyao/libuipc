@@ -19,6 +19,8 @@
 #include <active_set_system/global_active_set_manager.h>
 #include <pipeline/ipc_pipeline_flag.h>
 #include <pipeline/al_ipc_pipeline_flag.h>
+#include <pipeline/twp_pipeline_flag.h>
+#include <twp/global_twp.h>
 
 namespace uipc::backend::cuda
 {
@@ -52,6 +54,7 @@ void SimEngine::build()
 
     // Augmented Lagrangian Pipeline Systems
     m_global_active_set_manager = find<GlobalActiveSetManager>();
+    m_global_twp = find<GlobalTWP>();
 
 
     // 3) dump system info
@@ -81,7 +84,13 @@ void SimEngine::init_scene()
 
     auto alipc = find<ALIPCPipelineFlag>();
     auto ipc   = find<IPCPipelineFlag>();
-    if(alipc)
+    auto twp = find<TWPPipelineFlag>();
+    if(twp)
+    {
+        logger::info("Pipeline: TWP");
+        m_pipeline_type = PipelineType::TWP;
+    }
+    else if(alipc)
     {
         logger::info("Pipeline: Augmented Lagrangian IPC");
         m_pipeline_type = PipelineType::AugmentedLagrangian;
@@ -125,6 +134,8 @@ void SimEngine::init_scene()
             m_global_external_force_manager->init();
         if(m_global_active_set_manager)
             m_global_active_set_manager->init();
+        if(m_global_twp)
+            m_global_twp->init();
 
         m_line_searcher->init();
         m_global_linear_system->init();

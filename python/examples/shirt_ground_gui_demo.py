@@ -169,7 +169,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--shirt", default=str(DEFAULT_SHIRT))
     parser.add_argument("--workspace", default=str(DEFAULT_WORKSPACE))
-    parser.add_argument("--contact", choices=("ipc", "al-ipc"), default="ipc")
+    parser.add_argument("--contact", choices=("ipc", "al-ipc", "twp"), default="ipc")
     parser.add_argument("--run", action="store_true", help="start simulation immediately")
     parser.add_argument("--max-frames", type=int, default=0, help="0 means no limit")
     parser.add_argument("--scale", type=float, default=0.01)

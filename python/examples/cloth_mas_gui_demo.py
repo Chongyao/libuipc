@@ -172,7 +172,7 @@ def parse_args():
     parser.add_argument("--workspace", default=str(DEFAULT_WORKSPACE))
     parser.add_argument("--n", type=int, default=10)
     parser.add_argument("--cloth-size", type=float, default=0.5)
-    parser.add_argument("--contact", choices=("ipc", "al-ipc"), default="ipc")
+    parser.add_argument("--contact", choices=("ipc", "al-ipc", "twp"), default="ipc")
     parser.add_argument("--contact-enable", action="store_true")
     parser.add_argument("--mas", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--part-size", type=int, default=16)

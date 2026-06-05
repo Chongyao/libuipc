@@ -19,6 +19,7 @@ class DyTopoEffectLineSearchReporter final : public LineSearchReporter
         void compute_energy(bool is_init);
 
         SimSystemSlot<GlobalDyTopoEffectManager> global_dytopo_effect_manager;
+        bool                                     skip_contact_energy = false;
 
         muda::DeviceVar<Float>    energy;
         muda::DeviceBuffer<Float> energies;

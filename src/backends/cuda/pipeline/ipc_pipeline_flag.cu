@@ -12,7 +12,8 @@ class backend::SimSystemCreator<cuda::IPCPipelineFlag>
         auto scene = dynamic_cast<cuda::SimEngine&>(engine).world().scene();
         auto ctype_attr = scene.config().find<std::string>("contact/constitution");
 
-        if(ctype_attr->view()[0] != "ipc")
+        const auto& ctype = ctype_attr->view()[0];
+        if(ctype != "ipc" && ctype != "twp")
         {
             return nullptr;  // Not an IPC pipeline
         }

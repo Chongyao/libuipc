@@ -14,6 +14,7 @@ class GlobalContactManager;
 class GlobalDyTopoEffectManager;
 class GlobalTrajectoryFilter;
 class GlobalActiveSetManager;
+class GlobalTWP;
 
 class TimeIntegratorManager;
 class LineSearcher;
@@ -35,7 +36,8 @@ class SimEngine final : public backend::SimEngine
     enum class PipelineType
     {
         Basic,
-        AugmentedLagrangian
+        AugmentedLagrangian,
+        TWP
     };
 
     SimEngine(EngineCreateInfo*);
@@ -67,6 +69,7 @@ class SimEngine final : public backend::SimEngine
     void set_pipeline_type();
     void advance();
     void advance_AL();
+    void advance_twp();
     void dump_global_surface();
     void dump_global_surface_pre_ccd(SizeT newton_iter);
 
@@ -102,6 +105,7 @@ class SimEngine final : public backend::SimEngine
     GlobalExternalForceManager* m_global_external_force_manager = nullptr;
     GlobalDiffSimManager*       m_global_diff_sim_manager       = nullptr;
     GlobalActiveSetManager*     m_global_active_set_manager     = nullptr;
+    GlobalTWP*                  m_global_twp                    = nullptr;
     //GlobalDiffContactManager*    m_global_diff_contact_manager    = nullptr;
     //GlobalAdjointMethodReplayer* m_global_adjoint_method_replayer = nullptr;
     AffineBodyDynamics* m_affine_body_dynamics = nullptr;

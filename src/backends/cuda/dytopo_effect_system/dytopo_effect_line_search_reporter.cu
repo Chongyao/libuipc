@@ -7,6 +7,8 @@ REGISTER_SIM_SYSTEM(DyTopoEffectLineSearchReporter);
 void DyTopoEffectLineSearchReporter::do_build(LineSearchReporter::BuildInfo& info)
 {
     m_impl.global_dytopo_effect_manager = require<GlobalDyTopoEffectManager>();
+    auto ctype_attr = world().scene().config().find<std::string>("contact/constitution");
+    m_impl.skip_contact_energy = ctype_attr->view()[0] == "twp";
 }
 
 void DyTopoEffectLineSearchReporter::do_init(LineSearchReporter::InitInfo& info)
@@ -24,6 +26,12 @@ void DyTopoEffectLineSearchReporter::Impl::compute_energy(bool is_init)
     auto energy_counts = manager.reporter_energy_offsets_counts.counts();
     for(auto&& [i, reporter] : enumerate(reporters))
     {
+        if(skip_contact_energy && reporter->component_flags() == EnergyComponentFlags::Contact)
+        {
+            energy_counts[i] = 0;
+            continue;
+        }
+
         GlobalDyTopoEffectManager::EnergyExtentInfo extent_info;
         reporter->report_energy_extent(extent_info);
         energy_counts[i] = extent_info.m_energy_count;
@@ -34,6 +42,9 @@ void DyTopoEffectLineSearchReporter::Impl::compute_energy(bool is_init)
 
     for(auto&& [i, reporter] : enumerate(reporters))
     {
+        if(skip_contact_energy && reporter->component_flags() == EnergyComponentFlags::Contact)
+            continue;
+
         GlobalDyTopoEffectManager::EnergyInfo this_info;
         auto [offset, count]   = manager.reporter_energy_offsets_counts[i];
         this_info.m_energies   = energies.view(offset, count);

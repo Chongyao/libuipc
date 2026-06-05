@@ -295,7 +295,7 @@ def run_gui(args: argparse.Namespace):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", default=str(DEFAULT_WORKSPACE))
-    parser.add_argument("--contact", choices=("ipc", "al-ipc"), default="ipc")
+    parser.add_argument("--contact", choices=("ipc", "al-ipc", "twp"), default="ipc")
     parser.add_argument("--n", type=int, default=50)
     parser.add_argument("--cloth-usd", default="", help="path to Newton/Warp square_cloth.usd")
     parser.add_argument("--generated-grid", action="store_true", help="use generated fallback grid")

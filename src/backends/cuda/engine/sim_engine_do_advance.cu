@@ -12,6 +12,9 @@ void SimEngine::do_advance()
         case SimEngine::PipelineType::AugmentedLagrangian:
             advance_AL();
             break;
+        case SimEngine::PipelineType::TWP:
+            advance_twp();
+            break;
         default:
             UIPC_ERROR_WITH_LOCATION("Unknown pipeline type");
             break;
