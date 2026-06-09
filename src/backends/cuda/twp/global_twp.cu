@@ -36,6 +36,42 @@ namespace uipc::backend::cuda
 {
 REGISTER_SIM_SYSTEM(GlobalTWP);
 
+namespace
+{
+__forceinline__ __device__ void atomic_min_positive(Float* address, Float value)
+{
+    if constexpr(sizeof(Float) == sizeof(double))
+    {
+        auto address_as_ull = reinterpret_cast<unsigned long long int*>(address);
+        auto old            = *address_as_ull;
+        auto assumed        = old;
+        auto value_as_ull =
+            static_cast<unsigned long long int>(__double_as_longlong(value));
+        while(value_as_ull < old)
+        {
+            assumed = old;
+            old     = atomicCAS(address_as_ull, assumed, value_as_ull);
+            if(old == assumed)
+                break;
+        }
+    }
+    else
+    {
+        auto address_as_ui = reinterpret_cast<unsigned int*>(address);
+        auto old           = *address_as_ui;
+        auto assumed       = old;
+        auto value_as_ui   = __float_as_uint(static_cast<float>(value));
+        while(value_as_ui < old)
+        {
+            assumed = old;
+            old     = atomicCAS(address_as_ui, assumed, value_as_ui);
+            if(old == assumed)
+                break;
+        }
+    }
+}
+}  // namespace
+
 void GlobalTWP::do_build()
 {
     require<TWPPipelineFlag>();
@@ -105,6 +141,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     if(constraints.types.size() < max_count)
         constraints.resize(max_count);
     context.ensure_constraint_storage(max_count);
+    context.contact_vertex_flags.fill(0);
 
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
 
@@ -119,6 +156,8 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                 weights = constraints.weights.viewer().name("constraint_weights"),
                 normals = constraints.normals.viewer().name("constraint_normals"),
                 offsets = constraints.offsets.viewer().name("constraint_offsets"),
+                contact_vertex_flags =
+                    context.contact_vertex_flags.viewer().name("contact_vertex_flags"),
                 y = context.target_y.viewer().name("target_y"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 contact_ids =
@@ -166,6 +205,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                            weights(I)    = Vector4{1.0, 0.0, 0.0, 0.0};
                            normals(I)    = N;
                            offsets(I)    = P.dot(N) + min_dist;
+                           contact_vertex_flags(v) = 1;
                        }
                    }
                });
@@ -175,27 +215,32 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     if(global_simplicial_surface_manager && edge_count > 0
        && constraints.h_contact_count > 0)
     {
-        IndexT edge_offset = constraints.h_contact_count;
         Float  sigma = edge_sigma_attr ? edge_sigma_attr->view()[0] : 1.1;
         UIPC_ASSERT(sigma > 0.0, "contact/twp/edge_sigma must be positive.");
 
         ParallelFor()
             .file_line(__FILE__, __LINE__)
             .apply(edge_count,
-                   [types = constraints.types.viewer().name("constraint_types"),
+                   [count = constraints.count.viewer().name("constraint_count"),
+                    types = constraints.types.viewer().name("constraint_types"),
                     vertex_ids =
                         constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
                     weights = constraints.weights.viewer().name("constraint_weights"),
                     normals = constraints.normals.viewer().name("constraint_normals"),
                     offsets = constraints.offsets.viewer().name("constraint_offsets"),
                     edges = surf_edges.viewer().name("surf_edges"),
+                    contact_vertex_flags =
+                        context.contact_vertex_flags.viewer().name("contact_vertex_flags"),
                     x = context.x.viewer().name("x"),
                     target_y = context.target_y.viewer().name("target_y"),
-                    edge_offset,
                     sigma] __device__(int e) mutable
                    {
-                       IndexT I = edge_offset + e;
                        Vector2i E = edges(e);
+                       if(contact_vertex_flags(E.x()) == 0
+                          && contact_vertex_flags(E.y()) == 0)
+                           return;
+
+                       IndexT I = atomic_add(count.data(), 1);
                        Vector3 x_ij = x(E.x()) - x(E.y());
                        Float ref_len = x_ij.norm();
                        Vector3 y_ij = target_y(E.x()) - target_y(E.y());
@@ -215,8 +260,8 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                        offsets(I)    = min_len;
                    });
 
-        constraints.h_edge_count = edge_count;
-        constraints.count        = edge_offset + edge_count;
+        constraints.h_count      = constraints.count;
+        constraints.h_edge_count = constraints.h_count - constraints.h_contact_count;
     }
 
     constraints.h_count = constraints.count;
@@ -341,7 +386,8 @@ void GlobalTWP::Impl::forward()
     Timer timer{"TWP Forward"};
 
     constexpr Float ForwardSafety = 0.99;
-    Float alpha = 1.0;
+
+    context.safe_step_alphas.fill(1.0);
 
     if(constraints.h_count > 0)
     {
@@ -360,10 +406,7 @@ void GlobalTWP::Impl::forward()
                     y = context.y.viewer().name("y")] __device__(int i) mutable
                    {
                        if(types(i) != TWPConstraintType::VertexHalfPlane)
-                       {
-                           safe_step_alphas(i) = 1.0;
                            return;
-                       }
 
                        IndexT  v = vertex_ids(i).x();
                        Vector3 N = normals(i);
@@ -379,16 +422,12 @@ void GlobalTWP::Impl::forward()
                            alpha_i = max(Float{0.0}, min(Float{1.0}, alpha_i));
                        }
 
-                       safe_step_alphas(i) = alpha_i;
+                       if(alpha_i < 1.0)
+                       {
+                           alpha_i = max(Float{0.0}, min(Float{1.0}, ForwardSafety * alpha_i));
+                           atomic_min_positive(&safe_step_alphas(v), alpha_i);
+                       }
                    });
-
-        DeviceReduce().Min(context.safe_step_alphas.data(),
-                           context.min_safe_step_alpha.data(),
-                           constraints.h_count);
-
-        alpha = context.min_safe_step_alpha;
-        if(alpha < 1.0)
-            alpha = max(Float{0.0}, min(Float{1.0}, ForwardSafety * alpha));
     }
 
     using namespace muda;
@@ -400,13 +439,15 @@ void GlobalTWP::Impl::forward()
                 residual = context.residual.viewer().name("residual"),
                 forward_step_norms =
                     context.forward_step_norms.viewer().name("forward_step_norms"),
-                alpha] __device__(int i) mutable
+                safe_step_alphas =
+                    context.safe_step_alphas.viewer().name("safe_step_alphas")] __device__(int i) mutable
                {
+                   Float   alpha_i = safe_step_alphas(i);
                    Vector3 old_x = x(i);
-                   Vector3 step  = alpha * (y(i) - old_x);
+                   Vector3 step  = alpha_i * (y(i) - old_x);
                    Vector3 new_x = old_x + step;
                    x(i)          = new_x;
-                   residual(i)   = (y(i) - new_x).norm();
+                   residual(i) *= (1.0 - alpha_i);
                    forward_step_norms(i) = step.norm();
                });
 

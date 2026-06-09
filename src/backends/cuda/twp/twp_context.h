@@ -22,6 +22,7 @@ struct TWPContext
     muda::DeviceBuffer<IndexT>  backward_correction_counts;
     muda::DeviceBuffer<Float>   safe_step_alphas;
     muda::DeviceBuffer<Float>   forward_step_norms;
+    muda::DeviceBuffer<IndexT>  contact_vertex_flags;
     muda::DeviceBuffer<IndexT>  penetration_flags;
 
     muda::DeviceVar<IndexT> penetration_count;
