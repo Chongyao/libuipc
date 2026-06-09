@@ -35,7 +35,16 @@ except ImportError as exc:
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_SHIRT = REPO_ROOT / "output" / "unisex_shirt.obj"
 DEFAULT_WORKSPACE = REPO_ROOT / "output" / "python" / "shirt_ground_gui_demo"
+INITIAL_Y_OFFSET = 1.0
 _LOG_FILE_HANDLE = None
+
+
+def rotate_mesh_x_90_and_lift(mesh):
+    vertices = mesh.positions().view().reshape(-1, 3)
+    y = vertices[:, 1].copy()
+    z = vertices[:, 2].copy()
+    vertices[:, 1] = -z + INITIAL_Y_OFFSET
+    vertices[:, 2] = y
 
 
 def redirect_native_logs(args: argparse.Namespace):
@@ -100,6 +109,7 @@ def build_scene(args: argparse.Namespace):
 
     io = SimplicialComplexIO(pre_transform)
     shirt_mesh = io.read(str(shirt_path))
+    rotate_mesh_x_90_and_lift(shirt_mesh)
     label_surface(shirt_mesh)
     mesh_partition(shirt_mesh, args.part_size)
 

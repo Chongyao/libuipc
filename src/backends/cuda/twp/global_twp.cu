@@ -63,15 +63,10 @@ void GlobalTWP::Impl::init()
 
 void GlobalTWP::Impl::ensure_storage(SizeT vertex_count)
 {
-    x.resize(vertex_count);
-    y.resize(vertex_count);
-    target_y.resize(vertex_count);
-    residual.resize(vertex_count);
-    clearances.resize(vertex_count);
-    penetration_flags.resize(vertex_count);
+    context.ensure_storage(vertex_count);
 
     SizeT plane_count = half_plane ? half_plane->positions().size() : 0;
-    PHs.resize(vertex_count * plane_count);
+    constraints.resize(vertex_count * plane_count);
 }
 
 bool GlobalTWP::Impl::debug_enabled() const
@@ -81,35 +76,25 @@ bool GlobalTWP::Impl::debug_enabled() const
 
 void GlobalTWP::Impl::reset_algorithm_state()
 {
-    auto positions      = global_vertex_manager->positions();
-    auto prev_positions = global_vertex_manager->prev_positions();
-
-    ensure_storage(positions.size());
-
-    muda::BufferLaunch().copy<Vector3>(x.view(), prev_positions);
-    muda::BufferLaunch().copy<Vector3>(y.view(), positions);
-    muda::BufferLaunch().copy<Vector3>(target_y.view(), positions);
-    residual.fill(1.0);
-
-    remaining_search_bound = 0.0;
-    residual_inf           = 1.0;
-    max_forward_step       = 0.0;
+    context.reset(*global_vertex_manager.view());
+    constraints.clear();
 }
 
 void GlobalTWP::Impl::proximity_search(Float search_bound)
 {
     Timer timer{"TWP Proximity Search"};
 
+    constraints.clear();
+
     if(!half_plane || !half_plane_vertex_reporter || half_plane->positions().size() == 0)
         return;
 
-    SizeT vertex_count = target_y.size();
+    SizeT vertex_count = context.target_y.size();
     SizeT plane_count  = half_plane->positions().size();
     SizeT max_count    = vertex_count * plane_count;
-    if(PHs.size() < max_count)
-        PHs.resize(max_count);
-
-    PH_count = 0;
+    if(constraints.types.size() < max_count)
+        constraints.resize(max_count);
+    context.ensure_constraint_storage(max_count);
 
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
 
@@ -117,9 +102,14 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(vertex_count,
-               [count = PH_count.viewer().name("PH_count"),
-                PHs = PHs.viewer().name("PHs"),
-                y = target_y.viewer().name("target_y"),
+               [count = constraints.count.viewer().name("constraint_count"),
+                types = constraints.types.viewer().name("constraint_types"),
+                vertex_ids =
+                    constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                weights = constraints.weights.viewer().name("constraint_weights"),
+                normals = constraints.normals.viewer().name("constraint_normals"),
+                offsets = constraints.offsets.viewer().name("constraint_offsets"),
+                y = context.target_y.viewer().name("target_y"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 contact_ids =
                     global_vertex_manager->contact_element_ids().viewer().name("contact_ids"),
@@ -161,51 +151,27 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                        if(signed_dist < min_dist + search_bound)
                        {
                            IndexT I = atomic_add(count.data(), 1);
-                           PHs(I)   = Vector2i{v, h};
+                           types(I) = TWPConstraintType::VertexHalfPlane;
+                           vertex_ids(I) = Vector4i{v, -1, -1, -1};
+                           weights(I)    = Vector4{1.0, 0.0, 0.0, 0.0};
+                           normals(I)    = N;
+                           offsets(I)    = P.dot(N) + min_dist;
                        }
                    }
                });
 
-    h_PH_count = PH_count;
+    constraints.h_count = constraints.count;
 }
 
 void GlobalTWP::Impl::backward()
 {
-    Timer timer{"TWP Backward"};
-    muda::BufferLaunch().copy<Vector3>(y.view(), std::as_const(target_y).view());
-
-    if(!half_plane)
-        return;
-
-    if(h_PH_count == 0)
-        return;
-
-    using namespace muda;
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(h_PH_count,
-               [PHs = PHs.viewer().name("PHs"),
-                y = y.viewer().name("y"),
-                plane_positions = half_plane->positions().viewer().name("plane_positions"),
-                plane_normals = half_plane->normals().viewer().name("plane_normals"),
-                thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses")] __device__(
-                   int i) mutable
-               {
-                   Vector2i PH = PHs(i);
-                   IndexT   v  = PH.x();
-                   IndexT   h  = PH.y();
-
-                   const Vector3& P = plane_positions(h);
-                   const Vector3& N = plane_normals(h);
-
-                   Float signed_dist = (y(v) - P).dot(N);
-                   Float min_dist    = thicknesses(v);
-
-                   if(signed_dist < min_dist)
-                   {
-                       y(v) += (min_dist - signed_dist) * N;
-                   }
-               });
+    TWPBackwardSolver::SolveInfo info;
+    info.context                        = &context;
+    info.constraints                    = &constraints;
+    info.global_vertex_manager          = global_vertex_manager.view();
+    info.finite_element_method          = finite_element_method.view();
+    info.finite_element_vertex_reporter = finite_element_vertex_reporter.view();
+    backward_solver.solve(info);
 }
 
 Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> positions,
@@ -214,7 +180,7 @@ Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> position
     if(!half_plane || !half_plane_vertex_reporter || half_plane->positions().size() == 0)
         return 0.0;
 
-    clearances.resize(positions.size());
+    context.clearances.resize(positions.size());
 
     SizeT plane_count = half_plane->positions().size();
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
@@ -223,7 +189,7 @@ Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> position
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(positions.size(),
-               [clearances = clearances.viewer().name("clearances"),
+               [clearances = context.clearances.viewer().name("clearances"),
                 positions = positions.viewer().name("positions"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 plane_positions = half_plane->positions().viewer().name("plane_positions"),
@@ -251,9 +217,11 @@ Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> position
                    clearances(v) = min_clearance;
                });
 
-    DeviceReduce().Min(clearances.data(), min_clearance.data(), positions.size());
+    DeviceReduce().Min(context.clearances.data(),
+                       context.min_clearance.data(),
+                       positions.size());
 
-    return min_clearance;
+    return context.min_clearance;
 }
 
 IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> positions,
@@ -262,7 +230,7 @@ IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> pos
     if(!half_plane || !half_plane_vertex_reporter || half_plane->positions().size() == 0)
         return 0;
 
-    penetration_flags.resize(positions.size());
+    context.penetration_flags.resize(positions.size());
 
     SizeT plane_count = half_plane->positions().size();
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
@@ -271,7 +239,7 @@ IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> pos
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(positions.size(),
-               [flags = penetration_flags.viewer().name("penetration_flags"),
+               [flags = context.penetration_flags.viewer().name("penetration_flags"),
                 positions = positions.viewer().name("positions"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 plane_positions = half_plane->positions().viewer().name("plane_positions"),
@@ -303,23 +271,95 @@ IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> pos
                    flags(v) = penetrated;
                });
 
-    DeviceReduce().Sum(penetration_flags.data(),
-                       penetration_count.data(),
-                       penetration_flags.size());
-    return penetration_count;
+    DeviceReduce().Sum(context.penetration_flags.data(),
+                       context.penetration_count.data(),
+                       context.penetration_flags.size());
+    return context.penetration_count;
 }
 
 void GlobalTWP::Impl::forward()
 {
     Timer timer{"TWP Forward"};
-    // Placeholder for Algorithm 1 line 12:
-    // x^(l+1), r^(l+1) <- Forward(x^(l), r^(l), y^(l+1) - x^(l), P)
-    //
-    // With an empty P, the full step is safe, so accept y and terminate.
-    muda::BufferLaunch().copy<Vector3>(x.view(), std::as_const(y).view());
-    residual.fill(0.0);
-    residual_inf     = 0.0;
-    max_forward_step = 0.0;
+
+    constexpr Float ForwardSafety = 0.99;
+    Float alpha = 1.0;
+
+    if(constraints.h_count > 0)
+    {
+        using namespace muda;
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(constraints.h_count,
+                   [types = constraints.types.viewer().name("constraint_types"),
+                    vertex_ids =
+                        constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                    normals = constraints.normals.viewer().name("constraint_normals"),
+                    offsets = constraints.offsets.viewer().name("constraint_offsets"),
+                    safe_step_alphas =
+                        context.safe_step_alphas.viewer().name("safe_step_alphas"),
+                    x = context.x.viewer().name("x"),
+                    y = context.y.viewer().name("y")] __device__(int i) mutable
+                   {
+                       if(types(i) != TWPConstraintType::VertexHalfPlane)
+                       {
+                           safe_step_alphas(i) = 1.0;
+                           return;
+                       }
+
+                       IndexT  v = vertex_ids(i).x();
+                       Vector3 N = normals(i);
+
+                       Vector3 dir = y(v) - x(v);
+                       Float   normal_dir = dir.dot(N);
+                       Float   alpha_i    = 1.0;
+
+                       if(normal_dir < 0.0)
+                       {
+                           Float clearance = x(v).dot(N) - offsets(i);
+                           alpha_i = clearance / (-normal_dir);
+                           alpha_i = max(Float{0.0}, min(Float{1.0}, alpha_i));
+                       }
+
+                       safe_step_alphas(i) = alpha_i;
+                   });
+
+        DeviceReduce().Min(context.safe_step_alphas.data(),
+                           context.min_safe_step_alpha.data(),
+                           constraints.h_count);
+
+        alpha = context.min_safe_step_alpha;
+        if(alpha < 1.0)
+            alpha = max(Float{0.0}, min(Float{1.0}, ForwardSafety * alpha));
+    }
+
+    using namespace muda;
+    ParallelFor()
+        .file_line(__FILE__, __LINE__)
+        .apply(context.x.size(),
+               [x = context.x.viewer().name("x"),
+                y = context.y.viewer().name("y"),
+                residual = context.residual.viewer().name("residual"),
+                forward_step_norms =
+                    context.forward_step_norms.viewer().name("forward_step_norms"),
+                alpha] __device__(int i) mutable
+               {
+                   Vector3 old_x = x(i);
+                   Vector3 step  = alpha * (y(i) - old_x);
+                   Vector3 new_x = old_x + step;
+                   x(i)          = new_x;
+                   residual(i)   = (y(i) - new_x).norm();
+                   forward_step_norms(i) = step.norm();
+               });
+
+    DeviceReduce().Max(context.residual.data(),
+                       context.max_residual.data(),
+                       context.residual.size());
+    DeviceReduce().Max(context.forward_step_norms.data(),
+                       context.max_step_norm.data(),
+                       context.forward_step_norms.size());
+
+    context.residual_inf     = context.max_residual;
+    context.max_forward_step = context.max_step_norm;
 }
 
 void GlobalTWP::Impl::project()
@@ -335,35 +375,36 @@ void GlobalTWP::Impl::project()
 
     for(IndexT l = 0; l <= max_iter; ++l)
     {
-        if(remaining_search_bound < d_min)
+        if(context.remaining_search_bound < d_min)
         {
             proximity_search(d_max);
-            remaining_search_bound = d_max;
+            context.remaining_search_bound = d_max;
         }
 
         backward();
         forward();
 
-        remaining_search_bound -= 2.0 * max_forward_step;
+        context.remaining_search_bound -= 2.0 * context.max_forward_step;
 
-        if(residual_inf < eps)
+        if(context.residual_inf < eps)
             break;
     }
 
-    global_vertex_manager->overwrite_positions(x.view());
+    global_vertex_manager->overwrite_positions(context.x.view());
     if(finite_element_method)
     {
         UIPC_ASSERT(finite_element_vertex_reporter,
                     "FiniteElementVertexReporter is required to map global TWP positions "
                     "back to FEM positions.");
-        auto fem_vertex_count = finite_element_method->xs().size();
+        auto fem_vertex_count  = finite_element_method->xs().size();
         auto fem_vertex_offset = finite_element_vertex_reporter->vertex_offset();
-        UIPC_ASSERT(fem_vertex_offset + fem_vertex_count <= x.size(),
+        UIPC_ASSERT(fem_vertex_offset + fem_vertex_count <= context.x.size(),
                     "FEM global vertex range [{}, {}) exceeds TWP vertex count {}.",
                     fem_vertex_offset,
                     fem_vertex_offset + fem_vertex_count,
-                    x.size());
-        finite_element_method->overwrite_xs(x.view(fem_vertex_offset, fem_vertex_count));
+                    context.x.size());
+        finite_element_method->overwrite_xs(
+            context.x.view(fem_vertex_offset, fem_vertex_count));
     }
 
     debug_log_state("post-project");
@@ -376,10 +417,10 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
 
     Float target_min_clearance = 0.0;
     IndexT target_penetration_count = 0;
-    if(target_y.size() == global_vertex_manager->positions().size())
+    if(context.target_y.size() == global_vertex_manager->positions().size())
     {
-        target_min_clearance     = compute_min_clearance(target_y.view());
-        target_penetration_count = count_penetrated_vertices(target_y.view());
+        target_min_clearance     = compute_min_clearance(context.target_y.view());
+        target_penetration_count = count_penetrated_vertices(context.target_y.view());
     }
 
     Float global_min_clearance = compute_min_clearance(global_vertex_manager->positions());
@@ -410,18 +451,19 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
         SizeT plane_count = half_plane ? half_plane->positions().size() : 0;
         IndexT plane_vertex_offset =
             half_plane_vertex_reporter ? half_plane_vertex_reporter->vertex_offset() : -1;
-        if(h_PH_count > 0 || target_penetration_count > 0 || global_penetration_count > 0
+        if(constraints.h_count > 0 || target_penetration_count > 0 || global_penetration_count > 0
            || fem_penetration_count > 0)
         {
             logger::warn(
                 "TWP Debug[{}]: planes={}({}), plane_offset={}, PH={}, "
                 "target[min={}, pen={}], global[min={}, pen={}], "
-                "fem[offset={}, count={}, min={}, pen={}]",
+                "fem[offset={}, count={}, min={}, pen={}], "
+                "backward[violation={}], forward[residual={}, max_step={}]",
                 stage,
                 plane_count,
                 has_half_plane && has_half_plane_vertex_reporter,
                 plane_vertex_offset,
-                h_PH_count,
+                constraints.h_count,
                 target_min_clearance,
                 target_penetration_count,
                 global_min_clearance,
@@ -429,7 +471,10 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
                 fem_vertex_offset,
                 fem_vertex_count,
                 fem_min_clearance,
-                fem_penetration_count);
+                fem_penetration_count,
+                context.backward_violation_inf,
+                context.residual_inf,
+                context.max_forward_step);
         }
     }
 }

@@ -3,6 +3,9 @@
 #include <uipc/geometry/attribute_slot.h>
 #include <muda/buffer/device_buffer.h>
 #include <muda/buffer/device_var.h>
+#include <twp/twp_backward_solver.h>
+#include <twp/twp_constraint_set.h>
+#include <twp/twp_context.h>
 #include <string_view>
 #include <utility>
 
@@ -53,21 +56,9 @@ class GlobalTWP final : public SimSystem
         S<const geometry::AttributeSlot<Float>>  d_max_attr;
         S<const geometry::AttributeSlot<IndexT>> debug_attr;
 
-        muda::DeviceBuffer<Vector3> x;
-        muda::DeviceBuffer<Vector3> y;
-        muda::DeviceBuffer<Vector3> target_y;
-        muda::DeviceBuffer<Float>   residual;
-        muda::DeviceBuffer<Float>   clearances;
-        muda::DeviceBuffer<IndexT>  penetration_flags;
-        muda::DeviceBuffer<Vector2i> PHs;
-        muda::DeviceVar<IndexT>      PH_count;
-        muda::DeviceVar<IndexT>      penetration_count;
-        muda::DeviceVar<Float>       min_clearance;
-        IndexT                       h_PH_count = 0;
-
-        Float remaining_search_bound = 0.0;
-        Float residual_inf           = 1.0;
-        Float max_forward_step       = 0.0;
+        TWPContext        context;
+        TWPConstraintSet  constraints;
+        TWPBackwardSolver backward_solver;
     };
 
   private:
