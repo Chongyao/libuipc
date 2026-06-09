@@ -63,6 +63,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("contact/twp/eps", Float{1e-4});
     config.create("contact/twp/d_min", Float{0.005});
     config.create("contact/twp/d_max", Float{0.02});
+    config.create("contact/twp/debug", IndexT{0});
 
     // adaptive contact tuning knobs.
     config.create("contact/adaptive/min_kappa", Float{100.0_MPa});

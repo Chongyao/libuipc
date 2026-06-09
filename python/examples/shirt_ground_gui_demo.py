@@ -9,7 +9,9 @@ Controls:
 """
 
 import argparse
+import os
 import pathlib
+import sys
 import time
 
 import numpy as np
@@ -33,6 +35,28 @@ except ImportError as exc:
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_SHIRT = REPO_ROOT / "output" / "unisex_shirt.obj"
 DEFAULT_WORKSPACE = REPO_ROOT / "output" / "python" / "shirt_ground_gui_demo"
+_LOG_FILE_HANDLE = None
+
+
+def redirect_native_logs(args: argparse.Namespace):
+    if not args.twp_debug:
+        return
+
+    global _LOG_FILE_HANDLE
+
+    workspace = pathlib.Path(args.workspace).resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    log_path = pathlib.Path(args.log_file).resolve() if args.log_file else workspace / "twp_debug.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Writing TWP debug log to {log_path}", file=sys.stderr, flush=True)
+
+    _LOG_FILE_HANDLE = open(log_path, "w", buffering=1)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(_LOG_FILE_HANDLE.fileno(), sys.stdout.fileno())
+    os.dup2(_LOG_FILE_HANDLE.fileno(), sys.stderr.fileno())
 
 
 def build_scene(args: argparse.Namespace):
@@ -50,6 +74,7 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["constitution"] = args.contact
     config["contact"]["friction"]["enable"] = False
     config["contact"]["d_hat"] = args.d_hat
+    config["contact"]["twp"]["debug"] = int(args.twp_debug)
     config["line_search"]["max_iter"] = args.line_search_max_iter
     config["newton"]["max_iter"] = args.newton_max_iter
     config["newton"]["min_iter"] = args.newton_min_iter
@@ -179,6 +204,8 @@ def parse_args():
     parser.add_argument("--density", type=float, default=2.0e2)
     parser.add_argument("--thickness", type=float, default=0.0002)
     parser.add_argument("--d-hat", type=float, default=0.001)
+    parser.add_argument("--twp-debug", action="store_true")
+    parser.add_argument("--log-file", default=None)
     parser.add_argument("--line-search-max-iter", type=int, default=8)
     parser.add_argument("--newton-max-iter", type=int, default=1024)
     parser.add_argument("--newton-min-iter", type=int, default=1)
@@ -190,4 +217,6 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    run_gui(parse_args())
+    args = parse_args()
+    redirect_native_logs(args)
+    run_gui(args)

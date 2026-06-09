@@ -2,6 +2,8 @@
 #include <sim_system.h>
 #include <uipc/geometry/attribute_slot.h>
 #include <muda/buffer/device_buffer.h>
+#include <muda/buffer/device_var.h>
+#include <string_view>
 #include <utility>
 
 namespace uipc::backend::cuda
@@ -9,6 +11,10 @@ namespace uipc::backend::cuda
 class GlobalVertexManager;
 class GlobalTrajectoryFilter;
 class GlobalContactManager;
+class HalfPlane;
+class HalfPlaneVertexReporter;
+class FiniteElementMethod;
+class FiniteElementVertexReporter;
 
 class GlobalTWP final : public SimSystem
 {
@@ -20,26 +26,44 @@ class GlobalTWP final : public SimSystem
       public:
         void init();
         void project();
+        void debug_log_state(std::string_view stage);
 
         void ensure_storage(SizeT vertex_count);
         void reset_algorithm_state();
         void proximity_search(Float search_bound);
         void backward();
         void forward();
+        Float  compute_min_clearance(muda::CBufferView<Vector3> positions,
+                                      IndexT global_vertex_offset = 0);
+        IndexT count_penetrated_vertices(muda::CBufferView<Vector3> positions,
+                                         IndexT global_vertex_offset = 0);
+        bool  debug_enabled() const;
 
         SimSystemSlot<GlobalVertexManager>    global_vertex_manager;
         SimSystemSlot<GlobalTrajectoryFilter> global_trajectory_filter;
         SimSystemSlot<GlobalContactManager>   global_contact_manager;
+        SimSystemSlot<FiniteElementMethod>    finite_element_method;
+        SimSystemSlot<FiniteElementVertexReporter> finite_element_vertex_reporter;
+        SimSystemSlot<HalfPlane> half_plane;
+        SimSystemSlot<HalfPlaneVertexReporter> half_plane_vertex_reporter;
 
         S<const geometry::AttributeSlot<IndexT>> max_iter_attr;
         S<const geometry::AttributeSlot<Float>>  eps_attr;
         S<const geometry::AttributeSlot<Float>>  d_min_attr;
         S<const geometry::AttributeSlot<Float>>  d_max_attr;
+        S<const geometry::AttributeSlot<IndexT>> debug_attr;
 
         muda::DeviceBuffer<Vector3> x;
         muda::DeviceBuffer<Vector3> y;
         muda::DeviceBuffer<Vector3> target_y;
         muda::DeviceBuffer<Float>   residual;
+        muda::DeviceBuffer<Float>   clearances;
+        muda::DeviceBuffer<IndexT>  penetration_flags;
+        muda::DeviceBuffer<Vector2i> PHs;
+        muda::DeviceVar<IndexT>      PH_count;
+        muda::DeviceVar<IndexT>      penetration_count;
+        muda::DeviceVar<Float>       min_clearance;
+        IndexT                       h_PH_count = 0;
 
         Float remaining_search_bound = 0.0;
         Float residual_inf           = 1.0;
@@ -52,6 +76,7 @@ class GlobalTWP final : public SimSystem
     void do_build() override;
     void init();
     void project();
+    void debug_log_state(std::string_view stage);
 
     Impl m_impl;
 };

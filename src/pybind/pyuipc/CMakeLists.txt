@@ -35,11 +35,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${SOURCES})
 uipc_require_python_module(${UIPC_PYTHON_EXECUTABLE_PATH} "pybind11_stubgen")
 uipc_require_python_module(${UIPC_PYTHON_EXECUTABLE_PATH}  "numpy")
 
-# After build pyuipc, call the script to copy the dependent shared libraries to python package.
-add_custom_command(
-    TARGET pyuipc POST_BUILD
-    COMMAND ${UIPC_PYTHON_EXECUTABLE_PATH} 
-    ARGS
+set(UIPC_SYNC_PYUIPC_PACKAGE_COMMAND
     "${PROJECT_SOURCE_DIR}/scripts/after_build_pyuipc.py"
     "--target=$<TARGET_FILE:pyuipc>"
     "--project_dir=${PROJECT_SOURCE_DIR}"
@@ -47,9 +43,24 @@ add_custom_command(
     "--config=$<CONFIG>"
     "--build_type=${CMAKE_BUILD_TYPE}"
     "--build_wheel=${UIPC_BUILD_PYTHON_WHEEL}"
+)
+
+# After build pyuipc, call the script to copy the dependent shared libraries to python package.
+add_custom_command(
+    TARGET pyuipc POST_BUILD
+    COMMAND ${UIPC_PYTHON_EXECUTABLE_PATH}
+    ARGS ${UIPC_SYNC_PYUIPC_PACKAGE_COMMAND}
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     COMMENT "Generating type stubs for pyuipc package"
 )
+
+add_custom_target(sync_pyuipc_package
+    COMMAND ${UIPC_PYTHON_EXECUTABLE_PATH}
+            ${UIPC_SYNC_PYUIPC_PACKAGE_COMMAND}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    COMMENT "Synchronizing pyuipc package with built shared libraries"
+)
+add_dependencies(sync_pyuipc_package pyuipc uipc::backends)
 
 if(UIPC_BUILD_PYTHON_WHEEL)
     # UIPC_INSTALL_DIR is "uipc/_native"
@@ -68,4 +79,3 @@ uipc_install_target(pyuipc)
 # Install all vcpkg runtime dependencies (DLLs/shared libraries)
 # This installs DLLs from vcpkg_installed/bin which contain dependencies like spdlog, fmt, TBB, etc.
 uipc_install_vcpkg_runtime()
-

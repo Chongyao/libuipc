@@ -13,6 +13,7 @@ namespace uipc::backend::cuda
 class GlobalTrajectoryFilter;
 class GlobalActiveSetManager;
 class GlobalJointDofManager;
+class GlobalTWP;
 class VertexReporter;
 class GlobalVertexManager final : public SimSystem
 {
@@ -239,6 +240,7 @@ class GlobalVertexManager final : public SimSystem
     friend class MaxTranslationChecker;
     friend class GlobalTrajectoryFilter;
     friend class GlobalActiveSetManager;
+    friend class GlobalTWP;
 
     // Initialize the global vertex manager
     // - Create the surface mesh
