@@ -35,6 +35,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("linear_system/solver", std::string{"fused_pcg"});
 
     config.create("line_search/max_iter", IndexT{8});
+    config.create("line_search/enable", IndexT{1});
     config.create("line_search/report_energy", IndexT{0});
 
     config.create("contact/enable", IndexT{1});
@@ -63,6 +64,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("contact/twp/eps", Float{1e-4});
     config.create("contact/twp/d_min", Float{0.005});
     config.create("contact/twp/d_max", Float{0.02});
+    config.create("contact/twp/edge_sigma", Float{1.1});
     config.create("contact/twp/debug", IndexT{0});
 
     // adaptive contact tuning knobs.

@@ -84,6 +84,8 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["friction"]["enable"] = False
     config["contact"]["d_hat"] = args.d_hat
     config["contact"]["twp"]["debug"] = int(args.twp_debug)
+    config["contact"]["twp"]["edge_sigma"] = args.twp_edge_sigma
+    config["line_search"]["enable"] = int(not args.disable_line_search)
     config["line_search"]["max_iter"] = args.line_search_max_iter
     config["newton"]["max_iter"] = args.newton_max_iter
     config["newton"]["min_iter"] = args.newton_min_iter
@@ -215,8 +217,10 @@ def parse_args():
     parser.add_argument("--thickness", type=float, default=0.0002)
     parser.add_argument("--d-hat", type=float, default=0.001)
     parser.add_argument("--twp-debug", action="store_true")
+    parser.add_argument("--twp-edge-sigma", type=float, default=1.1)
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--line-search-max-iter", type=int, default=8)
+    parser.add_argument("--disable-line-search", action="store_true")
     parser.add_argument("--newton-max-iter", type=int, default=1024)
     parser.add_argument("--newton-min-iter", type=int, default=1)
     parser.add_argument("--newton-velocity-tol", type=float, default=0.05)

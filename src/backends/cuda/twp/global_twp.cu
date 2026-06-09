@@ -2,6 +2,7 @@
 #include <pipeline/twp_pipeline_flag.h>
 #include <sim_engine.h>
 #include <global_geometry/global_vertex_manager.h>
+#include <global_geometry/global_simplicial_surface_manager.h>
 #include <collision_detection/global_trajectory_filter.h>
 #include <contact_system/global_contact_manager.h>
 #include <finite_element/finite_element_method.h>
@@ -39,6 +40,7 @@ void GlobalTWP::do_build()
 {
     require<TWPPipelineFlag>();
     m_impl.global_vertex_manager    = require<GlobalVertexManager>();
+    m_impl.global_simplicial_surface_manager = find<GlobalSimplicialSurfaceManager>();
     m_impl.global_trajectory_filter = find<GlobalTrajectoryFilter>();
     m_impl.global_contact_manager   = find<GlobalContactManager>();
     m_impl.finite_element_method    = find<FiniteElementMethod>();
@@ -51,6 +53,7 @@ void GlobalTWP::do_build()
     m_impl.eps_attr      = config.find<Float>("contact/twp/eps");
     m_impl.d_min_attr    = config.find<Float>("contact/twp/d_min");
     m_impl.d_max_attr    = config.find<Float>("contact/twp/d_max");
+    m_impl.edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
     m_impl.debug_attr    = config.find<IndexT>("contact/twp/debug");
 
     on_write_scene([this] { debug_log_state("retrieve"); });
@@ -66,7 +69,10 @@ void GlobalTWP::Impl::ensure_storage(SizeT vertex_count)
     context.ensure_storage(vertex_count);
 
     SizeT plane_count = half_plane ? half_plane->positions().size() : 0;
-    constraints.resize(vertex_count * plane_count);
+    SizeT edge_count  = global_simplicial_surface_manager ?
+                           global_simplicial_surface_manager->surf_edges().size() :
+                           0;
+    constraints.resize(vertex_count * plane_count + edge_count);
 }
 
 bool GlobalTWP::Impl::debug_enabled() const
@@ -91,7 +97,11 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
 
     SizeT vertex_count = context.target_y.size();
     SizeT plane_count  = half_plane->positions().size();
-    SizeT max_count    = vertex_count * plane_count;
+    auto  surf_edges   = global_simplicial_surface_manager ?
+                           global_simplicial_surface_manager->surf_edges() :
+                           muda::CBufferView<Vector2i>{};
+    SizeT edge_count   = surf_edges.size();
+    SizeT max_count    = vertex_count * plane_count + edge_count;
     if(constraints.types.size() < max_count)
         constraints.resize(max_count);
     context.ensure_constraint_storage(max_count);
@@ -159,6 +169,55 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                        }
                    }
                });
+
+    constraints.h_contact_count = constraints.count;
+
+    if(global_simplicial_surface_manager && edge_count > 0
+       && constraints.h_contact_count > 0)
+    {
+        IndexT edge_offset = constraints.h_contact_count;
+        Float  sigma = edge_sigma_attr ? edge_sigma_attr->view()[0] : 1.1;
+        UIPC_ASSERT(sigma > 0.0, "contact/twp/edge_sigma must be positive.");
+
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(edge_count,
+                   [types = constraints.types.viewer().name("constraint_types"),
+                    vertex_ids =
+                        constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                    weights = constraints.weights.viewer().name("constraint_weights"),
+                    normals = constraints.normals.viewer().name("constraint_normals"),
+                    offsets = constraints.offsets.viewer().name("constraint_offsets"),
+                    edges = surf_edges.viewer().name("surf_edges"),
+                    x = context.x.viewer().name("x"),
+                    target_y = context.target_y.viewer().name("target_y"),
+                    edge_offset,
+                    sigma] __device__(int e) mutable
+                   {
+                       IndexT I = edge_offset + e;
+                       Vector2i E = edges(e);
+                       Vector3 x_ij = x(E.x()) - x(E.y());
+                       Float ref_len = x_ij.norm();
+                       Vector3 y_ij = target_y(E.x()) - target_y(E.y());
+                       Float y_len = y_ij.norm();
+                       Vector3 dir = Vector3::Zero();
+                       Float min_len = 0.0;
+                       if(ref_len > 1e-12)
+                       {
+                           dir     = y_len > 1e-12 ? y_ij / y_len : x_ij / ref_len;
+                           min_len = ref_len / sigma;
+                       }
+
+                       types(I) = TWPConstraintType::EdgeLengthLowerBound;
+                       vertex_ids(I) = Vector4i{E.x(), E.y(), -1, -1};
+                       weights(I)    = Vector4{1.0, -1.0, 0.0, 0.0};
+                       normals(I)    = dir;
+                       offsets(I)    = min_len;
+                   });
+
+        constraints.h_edge_count = edge_count;
+        constraints.count        = edge_offset + edge_count;
+    }
 
     constraints.h_count = constraints.count;
 }
@@ -455,15 +514,17 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
            || fem_penetration_count > 0)
         {
             logger::warn(
-                "TWP Debug[{}]: planes={}({}), plane_offset={}, PH={}, "
+                "TWP Debug[{}]: planes={}({}), plane_offset={}, PH={}, edge={}, "
                 "target[min={}, pen={}], global[min={}, pen={}], "
                 "fem[offset={}, count={}, min={}, pen={}], "
-                "backward[violation={}], forward[residual={}, max_step={}]",
+                "backward[violation={}, iter={}, converged={}], "
+                "forward[residual={}, max_step={}]",
                 stage,
                 plane_count,
                 has_half_plane && has_half_plane_vertex_reporter,
                 plane_vertex_offset,
-                constraints.h_count,
+                constraints.h_contact_count,
+                constraints.h_edge_count,
                 target_min_clearance,
                 target_penetration_count,
                 global_min_clearance,
@@ -473,6 +534,8 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
                 fem_min_clearance,
                 fem_penetration_count,
                 context.backward_violation_inf,
+                context.backward_iterations,
+                context.backward_converged,
                 context.residual_inf,
                 context.max_forward_step);
         }

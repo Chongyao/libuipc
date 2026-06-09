@@ -5,11 +5,170 @@
 #include <finite_element/finite_element_method.h>
 #include <finite_element/finite_element_vertex_reporter.h>
 #include <uipc/common/timer.h>
+#include <muda/buffer/buffer_launch.h>
+#include <muda/ext/eigen/atomic.h>
 #include <muda/launch/parallel_for.h>
 #include <muda/cub/device/device_reduce.h>
+#include <utility>
 
 namespace uipc::backend::cuda
 {
+namespace
+{
+constexpr IndexT BackwardMaxIterations = 32;
+constexpr Float  BackwardTolerance     = 1e-8;
+constexpr Float  LCPRelaxation         = 1.0;
+}  // namespace
+
+struct TWPUnitMassInfo
+{
+    MUDA_GENERIC Float inv_mass(IndexT) const { return 1.0; }
+};
+
+struct TWPFEMMassInfo
+{
+    muda::CDense1D<Float>  masses;
+    muda::CDense1D<IndexT> is_fixed;
+    IndexT                 fem_vertex_offset;
+    SizeT                  fem_vertex_count;
+
+    MUDA_GENERIC Float inv_mass(IndexT v) const
+    {
+        if(v < fem_vertex_offset || v >= fem_vertex_offset + fem_vertex_count)
+            return 0.0;
+
+        IndexT fem_v = v - fem_vertex_offset;
+        if(is_fixed(fem_v))
+            return 0.0;
+
+        Float mass = masses(fem_v);
+        return mass > 0.0 ? 1.0 / mass : 0.0;
+    }
+};
+
+template <typename MassInfo>
+void solve_lcp_iteration(TWPContext&        context,
+                         TWPConstraintSet& constraints,
+                         MassInfo          mass_info)
+{
+    context.backward_corrections.fill(Vector3::Zero());
+
+    using namespace muda;
+    ParallelFor()
+        .file_line(__FILE__, __LINE__)
+        .apply(constraints.h_count,
+               [vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
+                weights = constraints.weights.viewer().name("weights"),
+                normals = constraints.normals.viewer().name("normals"),
+                offsets = constraints.offsets.viewer().name("offsets"),
+                y = context.y.viewer().name("y"),
+                lambdas = context.backward_lambdas.viewer().name("backward_lambdas"),
+                corrections =
+                    context.backward_corrections.viewer().name("backward_corrections"),
+                mass_info] __device__(int c) mutable
+               {
+                   Vector4i ids = vertex_ids(c);
+                   Vector4  ws  = weights(c);
+                   Vector3  N   = normals(c);
+                   Float    C   = -offsets(c);
+                   Float    diag = 0.0;
+                   Float    n2   = N.squaredNorm();
+
+                   if(n2 <= 1e-24)
+                       return;
+
+                   for(IndexT local_i = 0; local_i < 4; ++local_i)
+                   {
+                       IndexT v = ids(local_i);
+                       if(v < 0 || ws(local_i) == 0.0)
+                           continue;
+
+                       C += ws(local_i) * y(v).dot(N);
+
+                       Float inv_mass = mass_info.inv_mass(v);
+                       if(inv_mass > 0.0)
+                           diag += ws(local_i) * ws(local_i) * inv_mass * n2;
+                   }
+
+                   if(diag <= 0.0)
+                       return;
+
+                   Float old_lambda = lambdas(c);
+                   Float new_lambda = old_lambda - LCPRelaxation * C / diag;
+                   new_lambda       = new_lambda > 0.0 ? new_lambda : 0.0;
+                   Float delta_lambda = new_lambda - old_lambda;
+                   lambdas(c)         = new_lambda;
+
+                   if(delta_lambda == 0.0)
+                       return;
+
+                   for(IndexT local_i = 0; local_i < 4; ++local_i)
+                   {
+                       IndexT v = ids(local_i);
+                       if(v < 0 || ws(local_i) == 0.0)
+                           continue;
+
+                       Float inv_mass = mass_info.inv_mass(v);
+                       if(inv_mass > 0.0)
+                       {
+                           auto& correction = corrections(v);
+                           muda::eigen::atomic_add(
+                               correction,
+                               ((ws(local_i) * inv_mass * delta_lambda) * N).eval());
+                       }
+                   }
+               });
+
+    ParallelFor()
+        .file_line(__FILE__, __LINE__)
+        .apply(context.y.size(),
+               [y = context.y.viewer().name("y"),
+                corrections =
+                    context.backward_corrections.viewer().name("backward_corrections")] __device__(int v) mutable
+               {
+                   y(v) += corrections(v);
+               });
+}
+
+template <typename MassInfo>
+void compute_lcp_violation(TWPContext&        context,
+                           TWPConstraintSet& constraints,
+                           MassInfo)
+{
+    context.backward_violations.fill(0.0);
+
+    using namespace muda;
+    ParallelFor()
+        .file_line(__FILE__, __LINE__)
+        .apply(constraints.h_count,
+               [vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
+                weights = constraints.weights.viewer().name("weights"),
+                normals = constraints.normals.viewer().name("normals"),
+                offsets = constraints.offsets.viewer().name("offsets"),
+                y = context.y.viewer().name("y"),
+                backward_violations =
+                    context.backward_violations.viewer().name("backward_violations")] __device__(
+                   int c) mutable
+               {
+                   Vector4i ids = vertex_ids(c);
+                   Vector4  ws  = weights(c);
+                   Vector3  N   = normals(c);
+                   Float    C   = -offsets(c);
+
+                   if(N.squaredNorm() <= 1e-24)
+                       return;
+
+                   for(IndexT local_i = 0; local_i < 4; ++local_i)
+                   {
+                       IndexT v = ids(local_i);
+                       if(v >= 0 && ws(local_i) != 0.0)
+                           C += ws(local_i) * y(v).dot(N);
+                   }
+
+                   backward_violations(c) = C < 0.0 ? -C : 0.0;
+               });
+}
+
 void TWPBackwardSolver::solve(SolveInfo info)
 {
     Timer timer{"TWP Backward"};
@@ -17,138 +176,49 @@ void TWPBackwardSolver::solve(SolveInfo info)
     auto& context     = *info.context;
     auto& constraints = *info.constraints;
 
+    muda::BufferLaunch().copy<Vector3>(context.y.view(),
+                                       std::as_const(context.target_y).view());
+    context.backward_lambdas.fill(0.0);
+    context.backward_iterations = 0;
+    context.backward_converged  = true;
+
     if(constraints.h_count == 0)
     {
         context.backward_violation_inf = 0.0;
         return;
     }
 
-    context.backward_violations.fill(0.0);
-
-    using namespace muda;
-    if(info.finite_element_method && info.finite_element_vertex_reporter)
+    bool use_fem_mass = info.finite_element_method && info.finite_element_vertex_reporter;
+    for(IndexT iter = 0; iter < BackwardMaxIterations; ++iter)
     {
-        IndexT fem_vertex_offset = info.finite_element_vertex_reporter->vertex_offset();
-        SizeT  fem_vertex_count  = info.finite_element_method->xs().size();
+        if(use_fem_mass)
+        {
+            TWPFEMMassInfo mass_info{
+                info.finite_element_method->masses().cviewer().name("masses"),
+                info.finite_element_method->is_fixed().cviewer().name("is_fixed"),
+                info.finite_element_vertex_reporter->vertex_offset(),
+                info.finite_element_method->xs().size()};
+            solve_lcp_iteration(context, constraints, mass_info);
+            compute_lcp_violation(context, constraints, mass_info);
+        }
+        else
+        {
+            TWPUnitMassInfo mass_info;
+            solve_lcp_iteration(context, constraints, mass_info);
+            compute_lcp_violation(context, constraints, mass_info);
+        }
 
-        ParallelFor()
-            .file_line(__FILE__, __LINE__)
-            .apply(constraints.h_count,
-                   [types = constraints.types.viewer().name("types"),
-                    vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
-                    weights = constraints.weights.viewer().name("weights"),
-                    normals = constraints.normals.viewer().name("normals"),
-                    offsets = constraints.offsets.viewer().name("offsets"),
-                    y = context.y.viewer().name("y"),
-                    backward_violations =
-                        context.backward_violations.viewer().name("backward_violations"),
-                    masses = info.finite_element_method->masses().viewer().name("masses"),
-                    is_fixed =
-                        info.finite_element_method->is_fixed().viewer().name("is_fixed"),
-                    fem_vertex_offset,
-                    fem_vertex_count] __device__(int c) mutable
-                   {
-                       if(types(c) != TWPConstraintType::VertexHalfPlane)
-                           return;
-
-                       Vector4i ids = vertex_ids(c);
-                       Vector4  ws  = weights(c);
-                       Vector3  N   = normals(c);
-                       Float    C   = -offsets(c);
-
-                       Float denom = 0.0;
-                       for(IndexT local_i = 0; local_i < 4; ++local_i)
-                       {
-                           IndexT v = ids(local_i);
-                           if(v < 0 || ws(local_i) == 0.0)
-                               continue;
-
-                           C += ws(local_i) * y(v).dot(N);
-
-                           if(v < fem_vertex_offset
-                              || v >= fem_vertex_offset + fem_vertex_count)
-                               continue;
-
-                           IndexT fem_v = v - fem_vertex_offset;
-                           if(is_fixed(fem_v))
-                               continue;
-
-                           Float mass = masses(fem_v);
-                           if(mass > 0.0)
-                               denom += ws(local_i) * ws(local_i) / mass;
-                       }
-
-                       if(C >= 0.0 || denom <= 0.0)
-                           return;
-
-                       Float violation = -C;
-                       Float lambda    = violation / denom;
-
-                       for(IndexT local_i = 0; local_i < 4; ++local_i)
-                       {
-                           IndexT v = ids(local_i);
-                           if(v < 0 || ws(local_i) == 0.0)
-                               continue;
-
-                           if(v < fem_vertex_offset
-                              || v >= fem_vertex_offset + fem_vertex_count)
-                               continue;
-
-                           IndexT fem_v = v - fem_vertex_offset;
-                           if(is_fixed(fem_v))
-                               continue;
-
-                           Float mass = masses(fem_v);
-                           if(mass > 0.0)
-                               y(v) += (ws(local_i) / mass) * lambda * N;
-                       }
-
-                       backward_violations(c) = violation;
-                   });
+        muda::DeviceReduce().Max(context.backward_violations.data(),
+                                 context.max_backward_violation.data(),
+                                 constraints.h_count);
+        context.backward_violation_inf = context.max_backward_violation;
+        context.backward_iterations    = iter + 1;
+        if(context.backward_violation_inf < BackwardTolerance)
+        {
+            context.backward_converged = true;
+            break;
+        }
+        context.backward_converged = false;
     }
-    else
-    {
-        ParallelFor()
-            .file_line(__FILE__, __LINE__)
-            .apply(constraints.h_count,
-                   [types = constraints.types.viewer().name("types"),
-                    vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
-                    weights = constraints.weights.viewer().name("weights"),
-                    normals = constraints.normals.viewer().name("normals"),
-                    offsets = constraints.offsets.viewer().name("offsets"),
-                    y = context.y.viewer().name("y"),
-                    backward_violations =
-                        context.backward_violations.viewer().name("backward_violations")] __device__(
-                       int c) mutable
-                   {
-                       if(types(c) != TWPConstraintType::VertexHalfPlane)
-                           return;
-
-                       Vector4i ids = vertex_ids(c);
-                       Vector4  ws  = weights(c);
-                       Vector3  N   = normals(c);
-                       Float    C   = -offsets(c);
-
-                       for(IndexT local_i = 0; local_i < 4; ++local_i)
-                       {
-                           IndexT v = ids(local_i);
-                           if(v >= 0 && ws(local_i) != 0.0)
-                               C += ws(local_i) * y(v).dot(N);
-                       }
-
-                       if(C < 0.0)
-                       {
-                           IndexT v = ids(0);
-                           Float violation = -C;
-                           y(v) += violation * N;
-                           backward_violations(c) = violation;
-                       }
-                   });
-    }
-
-    DeviceReduce().Max(context.backward_violations.data(),
-                       context.max_backward_violation.data(),
-                       constraints.h_count);
-    context.backward_violation_inf = context.max_backward_violation;
 }
 }  // namespace uipc::backend::cuda

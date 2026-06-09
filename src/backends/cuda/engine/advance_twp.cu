@@ -228,28 +228,41 @@ void SimEngine::advance_twp()
                         dump_global_surface_pre_ccd(newton_iter);
                     }
 
-                    Float E0 = m_line_searcher->compute_energy(true);
-
                     bool  converged        = convergence_check(newton_iter);
                     SizeT line_search_iter = 0;
-                    for(; line_search_iter < m_line_searcher->max_iter(); ++line_search_iter)
+
+                    bool line_search_enabled =
+                        !m_line_search_enable || m_line_search_enable->view()[0] != 0;
+                    if(line_search_enabled)
                     {
-                        Timer timer{"Line Search Iteration"};
-                        m_line_search_iter = line_search_iter;
+                        Float E0 = m_line_searcher->compute_energy(true);
 
-                        Float E = compute_energy(alpha);
+                        for(; line_search_iter < m_line_searcher->max_iter();
+                            ++line_search_iter)
+                        {
+                            Timer timer{"Line Search Iteration"};
+                            m_line_search_iter = line_search_iter;
 
-                        if(converged)
-                            break;
+                            Float E = compute_energy(alpha);
 
-                        bool energy_decrease = (E <= E0);
-                        if(energy_decrease)
-                            break;
+                            if(converged)
+                                break;
 
-                        alpha /= 2;
+                            bool energy_decrease = (E <= E0);
+                            if(energy_decrease)
+                                break;
+
+                            alpha /= 2;
+                        }
+
+                        check_line_search_iter(line_search_iter);
                     }
-
-                    check_line_search_iter(line_search_iter);
+                    else
+                    {
+                        m_line_search_iter = 0;
+                        m_global_vertex_manager->step_forward(alpha);
+                        m_line_searcher->step_forward(alpha);
+                    }
 
                     bool terminated = converged && (newton_iter >= newton_min_iter);
                     if(terminated)

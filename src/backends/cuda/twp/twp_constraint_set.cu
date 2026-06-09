@@ -13,7 +13,9 @@ void TWPConstraintSet::resize(SizeT capacity)
 
 void TWPConstraintSet::clear()
 {
-    count   = 0;
-    h_count = 0;
+    count           = 0;
+    h_count         = 0;
+    h_contact_count = 0;
+    h_edge_count    = 0;
 }
 }  // namespace uipc::backend::cuda

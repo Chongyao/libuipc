@@ -12,6 +12,8 @@ void TWPContext::ensure_storage(SizeT vertex_count)
     residual.resize(vertex_count);
     clearances.resize(vertex_count);
     backward_violations.resize(vertex_count);
+    backward_corrections.resize(vertex_count);
+    backward_correction_counts.resize(vertex_count);
     safe_step_alphas.resize(vertex_count);
     forward_step_norms.resize(vertex_count);
     penetration_flags.resize(vertex_count);
@@ -21,6 +23,8 @@ void TWPContext::ensure_constraint_storage(SizeT constraint_capacity)
 {
     if(backward_violations.size() < constraint_capacity)
         backward_violations.resize(constraint_capacity);
+    if(backward_lambdas.size() < constraint_capacity)
+        backward_lambdas.resize(constraint_capacity);
     if(safe_step_alphas.size() < constraint_capacity)
         safe_step_alphas.resize(constraint_capacity);
 }
@@ -37,6 +41,9 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     muda::BufferLaunch().copy<Vector3>(target_y.view(), positions);
     residual.fill(1.0);
     backward_violations.fill(0.0);
+    backward_lambdas.fill(0.0);
+    backward_corrections.fill(Vector3::Zero());
+    backward_correction_counts.fill(0);
     safe_step_alphas.fill(1.0);
     forward_step_norms.fill(0.0);
 
@@ -44,6 +51,8 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     residual_inf           = 1.0;
     backward_violation_inf = 0.0;
     max_forward_step       = 0.0;
+    backward_iterations    = 0;
+    backward_converged     = false;
 }
 
 }  // namespace uipc::backend::cuda

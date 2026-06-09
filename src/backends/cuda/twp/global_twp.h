@@ -12,6 +12,7 @@
 namespace uipc::backend::cuda
 {
 class GlobalVertexManager;
+class GlobalSimplicialSurfaceManager;
 class GlobalTrajectoryFilter;
 class GlobalContactManager;
 class HalfPlane;
@@ -43,6 +44,7 @@ class GlobalTWP final : public SimSystem
         bool  debug_enabled() const;
 
         SimSystemSlot<GlobalVertexManager>    global_vertex_manager;
+        SimSystemSlot<GlobalSimplicialSurfaceManager> global_simplicial_surface_manager;
         SimSystemSlot<GlobalTrajectoryFilter> global_trajectory_filter;
         SimSystemSlot<GlobalContactManager>   global_contact_manager;
         SimSystemSlot<FiniteElementMethod>    finite_element_method;
@@ -54,6 +56,7 @@ class GlobalTWP final : public SimSystem
         S<const geometry::AttributeSlot<Float>>  eps_attr;
         S<const geometry::AttributeSlot<Float>>  d_min_attr;
         S<const geometry::AttributeSlot<Float>>  d_max_attr;
+        S<const geometry::AttributeSlot<Float>>  edge_sigma_attr;
         S<const geometry::AttributeSlot<IndexT>> debug_attr;
 
         TWPContext        context;

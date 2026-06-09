@@ -130,6 +130,7 @@ class SimEngine final : public backend::SimEngine
     CAS<Float>  m_newton_velocity_tol;
     CAS<IndexT> m_newton_max_iter;
     CAS<IndexT> m_newton_min_iter;
+    CAS<IndexT> m_line_search_enable;
     CAS<IndexT> m_strict_mode;
     CAS<Float>  m_ccd_tol;
     CAS<IndexT> m_dump_surface;
