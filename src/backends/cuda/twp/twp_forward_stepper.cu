@@ -1,5 +1,6 @@
 #include <twp/global_twp.h>
 #include <global_geometry/global_vertex_manager.h>
+#include <utils/distance/distance_flagged.h>
 #include <uipc/common/timer.h>
 #include <muda/launch/parallel_for.h>
 #include <muda/cub/device/device_reduce.h>
@@ -63,22 +64,63 @@ void GlobalTWP::Impl::forward()
                         constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
                     normals = constraints.normals.viewer().name("constraint_normals"),
                     offsets = constraints.offsets.viewer().name("constraint_offsets"),
-                    proximity_distances = context.proximity_distances.viewer().name(
-                        "proximity_distances"),
                     x = context.x.viewer().name("x"),
+                    proximity_distances =
+                        context.proximity_distances.viewer().name("proximity_distances"),
                     thicknesses =
                         global_vertex_manager->thicknesses().viewer().name("thicknesses")] __device__(
                        int i) mutable
                    {
-                       if(types(i) != TWPConstraintType::VertexHalfPlane)
-                           return;
+                       TWPConstraintType type = types(i);
+                       Vector4i ids = vertex_ids(i);
 
-                       IndexT  v = vertex_ids(i).x();
-                       Vector3 N = normals(i);
-                       Float   plane_offset = offsets(i) - thicknesses(v);
-                       Float   distance     = x(v).dot(N) - plane_offset;
-                       distance = distance > 0.0 ? distance : 0.0;
-                       atomic_min_positive(&proximity_distances(v), distance);
+                       if(type == TWPConstraintType::VertexHalfPlane)
+                       {
+                           IndexT  v = ids.x();
+                           Vector3 N = normals(i);
+                           Float   plane_offset = offsets(i) - thicknesses(v);
+                           Float   distance = x(v).dot(N) - plane_offset;
+                           distance = distance >= 0.0 ? distance : -distance;
+                           atomic_min_positive(&proximity_distances(v), distance);
+                       }
+                       else if(type == TWPConstraintType::PointTriangle)
+                       {
+                           const Vector3& P  = x(ids(0));
+                           const Vector3& T0 = x(ids(1));
+                           const Vector3& T1 = x(ids(2));
+                           const Vector3& T2 = x(ids(3));
+
+                           Vector4i flag =
+                               distance::point_triangle_distance_flag(P, T0, T1, T2);
+                           Float distance2 = 0.0;
+                           distance::point_triangle_distance2(
+                               flag, P, T0, T1, T2, distance2);
+                           Float distance =
+                               distance2 > 0.0 ? sqrt(distance2) : Float{0.0};
+
+                           for(IndexT local_i = 0; local_i < 4; ++local_i)
+                               atomic_min_positive(&proximity_distances(ids(local_i)),
+                                                   distance);
+                       }
+                       else if(type == TWPConstraintType::EdgeEdge)
+                       {
+                           const Vector3& E0 = x(ids(0));
+                           const Vector3& E1 = x(ids(1));
+                           const Vector3& E2 = x(ids(2));
+                           const Vector3& E3 = x(ids(3));
+
+                           Vector4i flag =
+                               distance::edge_edge_distance_flag(E0, E1, E2, E3);
+                           Float distance2 = 0.0;
+                           distance::edge_edge_distance2(
+                               flag, E0, E1, E2, E3, distance2);
+                           Float distance =
+                               distance2 > 0.0 ? sqrt(distance2) : Float{0.0};
+
+                           for(IndexT local_i = 0; local_i < 4; ++local_i)
+                               atomic_min_positive(&proximity_distances(ids(local_i)),
+                                                   distance);
+                       }
                    });
     }
 
@@ -109,11 +151,8 @@ void GlobalTWP::Impl::forward()
                    {
                        Float D_i = proximity_distances(i);
                        if(D_i < Float{1e29})
-                       {
-                           alpha_i =
-                               min(Float{1.0}, Float{0.5} * ForwardSafety * D_i / norm);
-                           alpha_i = max(Float{0.0}, alpha_i);
-                       }
+                           alpha_i = min(Float{1.0},
+                                         Float{0.5} * ForwardSafety * D_i / norm);
                    }
 
                    safe_step_alphas(i) = alpha_i;

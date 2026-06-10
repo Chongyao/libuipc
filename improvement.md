@@ -20,6 +20,11 @@
 
 ## Architecture Remaining
 
+- `GlobalTWP` currently calls `GlobalTrajectoryFilter::detect()` by adding `GlobalTWP`
+  as a friend of `GlobalTrajectoryFilter`. This should be cleaned up later:
+  keep candidate refresh on the owner side, preferably in the TWP advance path
+  before `GlobalTWP::project()`, so TWP only reads existing simplex candidates
+  and does not need private access to `GlobalTrajectoryFilter`.
 - `TWPConstraintSet` still stores all constraints in one generic linear payload. Before adding vertex-triangle and edge-edge volume constraints, add typed builders or typed views for those constraint families.
 - Half-plane contact is currently a special first constraint family. When adding cloth self-proximity, keep proximity generation and constraint encoding separate so `proximity_search()` does not silently become an edge/volume constraint assembly function.
 - Backward solver diagnostics are separated from core context, but LCP solve policy is still hard-coded in `TWPBackwardSolver`. If adding alternative relaxations or switching between Jacobi/GS for experiments, make the solve policy explicit.

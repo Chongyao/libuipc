@@ -9,6 +9,7 @@ void TWPConstraintSet::resize(SizeT capacity)
     weights.resize(capacity);
     normals.resize(capacity);
     offsets.resize(capacity);
+    gradients.resize(capacity);
 }
 
 void TWPConstraintSet::clear()

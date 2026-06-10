@@ -4,12 +4,14 @@
 #include <global_geometry/global_vertex_manager.h>
 #include <global_geometry/global_simplicial_surface_manager.h>
 #include <collision_detection/global_trajectory_filter.h>
+#include <collision_detection/simplex_trajectory_filter.h>
 #include <contact_system/global_contact_manager.h>
 #include <finite_element/finite_element_method.h>
 #include <finite_element/finite_element_vertex_reporter.h>
 #include <implicit_geometry/half_plane.h>
 #include <implicit_geometry/half_plane_vertex_reporter.h>
 #include <uipc/common/timer.h>
+#include <sstream>
 #include <string_view>
 
 namespace uipc::backend
@@ -53,6 +55,13 @@ void GlobalTWP::do_build()
     m_impl.edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
     m_impl.debug_attr    = config.find<IndexT>("contact/twp/debug");
 
+    on_init_scene(
+        [this]
+        {
+            if(m_impl.global_trajectory_filter)
+                m_impl.simplex_trajectory_filter =
+                    m_impl.global_trajectory_filter->find<SimplexTrajectoryFilter>();
+        });
     on_write_scene([this] { debug_log_state("retrieve"); });
 }
 
@@ -108,6 +117,7 @@ void GlobalTWP::Impl::project()
 
     bool   converged = false;
     IndexT step_count = 0;
+    IndexT abnormal_debug_count = 0;
     for(IndexT l = 0; l <= max_iter; ++l)
     {
         step_count = l + 1;
@@ -121,6 +131,25 @@ void GlobalTWP::Impl::project()
         refresh_edge_constraints();
         backward();
         forward();
+
+        if(debug_enabled())
+        {
+            bool abnormal_forward =
+                context.diagnostics.forward.max_step > d_max * Float{100.0}
+                || context.diagnostics.forward.min_alpha == 0.0
+                || context.diagnostics.forward.residual_inf > Float{0.5};
+            bool abnormal_backward =
+                !context.diagnostics.backward.converged
+                && context.diagnostics.backward.violation_inf > Float{1e-4};
+            if((abnormal_forward || abnormal_backward)
+               && (abnormal_debug_count < 16 || l % 32 == 0))
+            {
+                std::ostringstream ss;
+                ss << "iter-" << l;
+                debug_log_state(ss.str());
+                ++abnormal_debug_count;
+            }
+        }
 
         context.remaining_search_bound -= 2.0 * context.diagnostics.forward.max_step;
 

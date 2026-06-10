@@ -8,6 +8,7 @@
 #include <muda/buffer/buffer_launch.h>
 #include <muda/launch/parallel_for.h>
 #include <muda/cub/device/device_reduce.h>
+#include <muda/ext/eigen/atomic.h>
 #include <unordered_set>
 #include <utility>
 
@@ -47,42 +48,36 @@ struct TWPFEMMassInfo
 };
 
 template <typename VertexIdView,
-          typename WeightView,
-          typename NormalView,
           typename OffsetView,
+          typename GradientView,
           typename PositionView,
           typename LambdaView,
           typename MassInfo>
 MUDA_GENERIC void solve_lcp_constraint(IndexT        c,
                                        VertexIdView& vertex_ids,
-                                       WeightView&   weights,
-                                       NormalView&   normals,
                                        OffsetView&   offsets,
+                                       GradientView& gradients,
                                        PositionView& y,
                                        LambdaView&   lambdas,
                                        MassInfo      mass_info)
 {
     Vector4i ids = vertex_ids(c);
-    Vector4  ws  = weights(c);
-    Vector3  N   = normals(c);
+    Vector12 G   = gradients(c);
     Float    C   = -offsets(c);
     Float    diag = 0.0;
-    Float    n2   = N.squaredNorm();
-
-    if(n2 <= 1e-24)
-        return;
 
     for(IndexT local_i = 0; local_i < 4; ++local_i)
     {
         IndexT v = ids(local_i);
-        if(v < 0 || ws(local_i) == 0.0)
+        Vector3 g = G.segment<3>(local_i * 3);
+        if(v < 0 || g.squaredNorm() <= 1e-24)
             continue;
 
-        C += ws(local_i) * y(v).dot(N);
+        C += g.dot(y(v));
 
         Float inv_mass = mass_info.inv_mass(v);
         if(inv_mass > 0.0)
-            diag += ws(local_i) * ws(local_i) * inv_mass * n2;
+            diag += inv_mass * g.squaredNorm();
     }
 
     if(diag <= 0.0)
@@ -100,46 +95,100 @@ MUDA_GENERIC void solve_lcp_constraint(IndexT        c,
     for(IndexT local_i = 0; local_i < 4; ++local_i)
     {
         IndexT v = ids(local_i);
-        if(v < 0 || ws(local_i) == 0.0)
+        Vector3 g = G.segment<3>(local_i * 3);
+        if(v < 0 || g.squaredNorm() <= 1e-24)
             continue;
 
         Float inv_mass = mass_info.inv_mass(v);
         if(inv_mass > 0.0)
-            y(v) += (ws(local_i) * inv_mass * delta_lambda) * N;
+            y(v) += inv_mass * delta_lambda * g;
     }
 }
 
 template <typename MassInfo>
-void solve_lcp_range(TWPContext&        context,
-                     TWPConstraintSet& constraints,
-                     IndexT            constraint_offset,
-                     IndexT            constraint_count,
-                     MassInfo          mass_info)
+void solve_lcp_jacobi_range(TWPContext&        context,
+                            TWPConstraintSet& constraints,
+                            IndexT            constraint_offset,
+                            IndexT            constraint_count,
+                            MassInfo          mass_info)
 {
     if(constraint_count == 0)
         return;
+
+    context.backward_corrections.fill(Vector3::Zero());
 
     using namespace muda;
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(constraint_count,
                [vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
-                weights = constraints.weights.viewer().name("weights"),
-                normals = constraints.normals.viewer().name("normals"),
                 offsets = constraints.offsets.viewer().name("offsets"),
-                y = context.y.viewer().name("y"),
+                gradients = constraints.gradients.viewer().name("gradients"),
+                y = context.y.cviewer().name("y"),
+                corrections =
+                    context.backward_corrections.viewer().name("backward_corrections"),
                 lambdas = context.backward_lambdas.viewer().name("backward_lambdas"),
                 constraint_offset,
                 mass_info] __device__(int local_c) mutable
                {
-                   solve_lcp_constraint(constraint_offset + local_c,
-                                        vertex_ids,
-                                        weights,
-                                        normals,
-                                        offsets,
-                                        y,
-                                        lambdas,
-                                        mass_info);
+                   IndexT   c   = constraint_offset + local_c;
+                   Vector4i ids = vertex_ids(c);
+                   Vector12 G   = gradients(c);
+                   Float    C   = -offsets(c);
+                   Float    diag = 0.0;
+
+                   for(IndexT local_i = 0; local_i < 4; ++local_i)
+                   {
+                       IndexT v = ids(local_i);
+                       Vector3 g = G.segment<3>(local_i * 3);
+                       if(v < 0 || g.squaredNorm() <= 1e-24)
+                           continue;
+
+                       C += g.dot(y(v));
+
+                       Float inv_mass = mass_info.inv_mass(v);
+                       if(inv_mass > 0.0)
+                           diag += inv_mass * g.squaredNorm();
+                   }
+
+                   if(diag <= 0.0)
+                       return;
+
+                   Float old_lambda = lambdas(c);
+                   Float new_lambda = old_lambda - LCPRelaxation * C / diag;
+                   new_lambda       = new_lambda > 0.0 ? new_lambda : 0.0;
+                   Float delta_lambda = new_lambda - old_lambda;
+                   lambdas(c)         = new_lambda;
+
+                   if(delta_lambda == 0.0)
+                       return;
+
+                   for(IndexT local_i = 0; local_i < 4; ++local_i)
+                   {
+                       IndexT v = ids(local_i);
+                       Vector3 g = G.segment<3>(local_i * 3);
+                       if(v < 0 || g.squaredNorm() <= 1e-24)
+                           continue;
+
+                       Float inv_mass = mass_info.inv_mass(v);
+                       if(inv_mass <= 0.0)
+                           continue;
+
+                       Vector3 delta = (inv_mass * delta_lambda * g).eval();
+                       auto&   dst   = corrections(v);
+                       muda::eigen::atomic_add(dst, delta);
+                   }
+               });
+
+    ParallelFor()
+        .file_line(__FILE__, __LINE__)
+        .apply(context.y.size(),
+               [y = context.y.viewer().name("y"),
+                corrections =
+                    context.backward_corrections.viewer().name("backward_corrections")] __device__(
+                   int v) mutable
+               {
+                   y(v) += corrections(v);
                });
 }
 
@@ -165,9 +214,8 @@ void solve_edge_constraints_colored(TWPContext&              context,
             .apply(count,
                    [edge_ids = colored_edge_ids.viewer().name("colored_edge_ids"),
                     vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
-                    weights = constraints.weights.viewer().name("weights"),
-                    normals = constraints.normals.viewer().name("normals"),
                     offsets = constraints.offsets.viewer().name("offsets"),
+                    gradients = constraints.gradients.viewer().name("gradients"),
                     y = context.y.viewer().name("y"),
                     lambdas =
                         context.backward_lambdas.viewer().name("backward_lambdas"),
@@ -178,9 +226,8 @@ void solve_edge_constraints_colored(TWPContext&              context,
                        IndexT edge_id = edge_ids(begin + local_c);
                        solve_lcp_constraint(edge_constraint_offset + edge_id,
                                             vertex_ids,
-                                            weights,
-                                            normals,
                                             offsets,
+                                            gradients,
                                             y,
                                             lambdas,
                                             mass_info);
@@ -204,9 +251,8 @@ void compute_lcp_diagnostics(TWPContext&        context,
         .file_line(__FILE__, __LINE__)
         .apply(constraint_count,
                [vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
-                weights = constraints.weights.viewer().name("weights"),
-                normals = constraints.normals.viewer().name("normals"),
                 offsets = constraints.offsets.viewer().name("offsets"),
+                gradients = constraints.gradients.viewer().name("gradients"),
                 y = context.y.viewer().name("y"),
                 lambdas = context.backward_lambdas.viewer().name("backward_lambdas"),
                 backward_violations =
@@ -223,25 +269,21 @@ void compute_lcp_diagnostics(TWPContext&        context,
                    int c) mutable
                {
                    Vector4i ids = vertex_ids(c);
-                   Vector4  ws  = weights(c);
-                   Vector3  N   = normals(c);
+                   Vector12 G   = gradients(c);
                    Float    C   = -offsets(c);
                    Float    diag = 0.0;
-                   Float    n2   = N.squaredNorm();
-
-                   if(n2 <= 1e-24)
-                       return;
 
                    for(IndexT local_i = 0; local_i < 4; ++local_i)
                    {
                        IndexT v = ids(local_i);
-                       if(v >= 0 && ws(local_i) != 0.0)
+                       Vector3 g = G.segment<3>(local_i * 3);
+                       if(v >= 0 && g.squaredNorm() > 1e-24)
                        {
-                           C += ws(local_i) * y(v).dot(N);
+                           C += g.dot(y(v));
 
                            Float inv_mass = mass_info.inv_mass(v);
                            if(inv_mass > 0.0)
-                               diag += ws(local_i) * ws(local_i) * inv_mass * n2;
+                               diag += inv_mass * g.squaredNorm();
                        }
                    }
 
@@ -392,7 +434,7 @@ void TWPBackwardSolver::solve(SolveInfo info)
                                            std::as_const(m_colored_edge_ids).view(),
                                            m_host_edge_color_offsets,
                                            mass_info);
-            solve_lcp_range(context, constraints, 0, contact_count, mass_info);
+            solve_lcp_jacobi_range(context, constraints, 0, contact_count, mass_info);
             compute_lcp_diagnostics(context, constraints, mass_info);
         }
         else
@@ -403,7 +445,7 @@ void TWPBackwardSolver::solve(SolveInfo info)
                                            std::as_const(m_colored_edge_ids).view(),
                                            m_host_edge_color_offsets,
                                            mass_info);
-            solve_lcp_range(context, constraints, 0, contact_count, mass_info);
+            solve_lcp_jacobi_range(context, constraints, 0, contact_count, mass_info);
             compute_lcp_diagnostics(context, constraints, mass_info);
         }
 

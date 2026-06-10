@@ -7,6 +7,7 @@ namespace uipc::backend::cuda
 class TrajectoryFilter;
 class GlobalContactManager;
 class ContactExporterManager;
+class GlobalTWP;
 
 class GlobalTrajectoryFilter final : public SimSystem
 {
@@ -101,6 +102,7 @@ class GlobalTrajectoryFilter final : public SimSystem
 
     friend class SimEngine;
     friend class ContactExporterManager;
+    friend class GlobalTWP;
     void detect(Float alpha);  // called by SimEngine and ContactExporterManager
     void filter_active();      // called by SimEngine and ContactExporterManager
 

@@ -9,18 +9,22 @@ enum class TWPConstraintType : IndexT
 {
     VertexHalfPlane = 0,
     EdgeLengthUpperBound = 1,
+    PointTriangle = 2,
+    EdgeEdge = 3,
 };
 
 template <typename TypeView,
           typename VertexIdView,
           typename WeightView,
           typename NormalView,
-          typename OffsetView>
+          typename OffsetView,
+          typename GradientView>
 MUDA_GENERIC void write_vertex_half_plane_constraint(TypeView&       types,
                                                      VertexIdView&   vertex_ids,
                                                      WeightView&     weights,
                                                      NormalView&     normals,
                                                      OffsetView&     offsets,
+                                                     GradientView&   gradients,
                                                      IndexT          constraint_id,
                                                      IndexT          vertex_id,
                                                      const Vector3&  normal,
@@ -31,18 +35,23 @@ MUDA_GENERIC void write_vertex_half_plane_constraint(TypeView&       types,
     weights(constraint_id)    = Vector4{1.0, 0.0, 0.0, 0.0};
     normals(constraint_id)    = normal;
     offsets(constraint_id)    = offset;
+    Vector12 G                = Vector12::Zero();
+    G.segment<3>(0)           = normal;
+    gradients(constraint_id)  = G;
 }
 
 template <typename TypeView,
           typename VertexIdView,
           typename WeightView,
           typename NormalView,
-          typename OffsetView>
+          typename OffsetView,
+          typename GradientView>
 MUDA_GENERIC void write_edge_length_upper_bound_constraint(TypeView&       types,
                                                            VertexIdView&   vertex_ids,
                                                            WeightView&     weights,
                                                            NormalView&     normals,
                                                            OffsetView&     offsets,
+                                                           GradientView&   gradients,
                                                            IndexT          constraint_id,
                                                            const Vector2i& edge,
                                                            const Vector3&  direction,
@@ -53,19 +62,25 @@ MUDA_GENERIC void write_edge_length_upper_bound_constraint(TypeView&       types
     weights(constraint_id)    = Vector4{-2.0, 2.0, 0.0, 0.0};
     normals(constraint_id)    = direction;
     offsets(constraint_id)    = -rhs;
+    Vector12 G                = Vector12::Zero();
+    G.segment<3>(0)           = -2.0 * direction;
+    G.segment<3>(3)           = 2.0 * direction;
+    gradients(constraint_id)  = G;
 }
 
 template <typename TypeView,
           typename VertexIdView,
           typename WeightView,
           typename NormalView,
-          typename OffsetView>
+          typename OffsetView,
+          typename GradientView>
 MUDA_GENERIC void write_disabled_edge_length_upper_bound_constraint(
     TypeView&     types,
     VertexIdView& vertex_ids,
     WeightView&   weights,
     NormalView&   normals,
     OffsetView&   offsets,
+    GradientView& gradients,
     IndexT        constraint_id)
 {
     types(constraint_id)      = TWPConstraintType::EdgeLengthUpperBound;
@@ -73,6 +88,33 @@ MUDA_GENERIC void write_disabled_edge_length_upper_bound_constraint(
     weights(constraint_id)    = Vector4::Zero();
     normals(constraint_id)    = Vector3::Zero();
     offsets(constraint_id)    = 0.0;
+    gradients(constraint_id)  = Vector12::Zero();
+}
+
+template <typename TypeView,
+          typename VertexIdView,
+          typename WeightView,
+          typename NormalView,
+          typename OffsetView,
+          typename GradientView>
+MUDA_GENERIC void write_simplex_contact_constraint(TypeView&              types,
+                                                   VertexIdView&          vertex_ids,
+                                                   WeightView&            weights,
+                                                   NormalView&            normals,
+                                                   OffsetView&            offsets,
+                                                   GradientView&          gradients,
+                                                   IndexT                 constraint_id,
+                                                   TWPConstraintType      type,
+                                                   const Vector4i&        vertices,
+                                                   const Vector12&        gradient,
+                                                   Float                  offset)
+{
+    types(constraint_id)      = type;
+    vertex_ids(constraint_id) = vertices;
+    weights(constraint_id)    = Vector4::Zero();
+    normals(constraint_id)    = Vector3::Zero();
+    offsets(constraint_id)    = offset;
+    gradients(constraint_id)  = gradient;
 }
 
 struct TWPConstraintSet
@@ -82,6 +124,7 @@ struct TWPConstraintSet
     muda::DeviceBuffer<Vector4>           weights;
     muda::DeviceBuffer<Vector3>           normals;
     muda::DeviceBuffer<Float>             offsets;
+    muda::DeviceBuffer<Vector12>          gradients;
     muda::DeviceVar<IndexT>               count;
 
     void resize(SizeT capacity);

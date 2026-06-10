@@ -14,6 +14,7 @@ namespace uipc::backend::cuda
 class GlobalVertexManager;
 class GlobalSimplicialSurfaceManager;
 class GlobalTrajectoryFilter;
+class SimplexTrajectoryFilter;
 class GlobalContactManager;
 class HalfPlane;
 class HalfPlaneVertexReporter;
@@ -36,6 +37,7 @@ class GlobalTWP final : public SimSystem
         void reset_algorithm_state();
         void prepare_edge_reference_length_squares();
         void proximity_search(Float search_bound);
+        void append_simplex_contact_constraints(Float search_bound);
         void refresh_edge_constraints();
         void backward();
         void forward();
@@ -48,6 +50,7 @@ class GlobalTWP final : public SimSystem
         SimSystemSlot<GlobalVertexManager>    global_vertex_manager;
         SimSystemSlot<GlobalSimplicialSurfaceManager> global_simplicial_surface_manager;
         SimSystemSlot<GlobalTrajectoryFilter> global_trajectory_filter;
+        SimSystemSlot<SimplexTrajectoryFilter> simplex_trajectory_filter;
         SimSystemSlot<GlobalContactManager>   global_contact_manager;
         SimSystemSlot<FiniteElementMethod>    finite_element_method;
         SimSystemSlot<FiniteElementVertexReporter> finite_element_vertex_reporter;

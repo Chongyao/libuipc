@@ -61,6 +61,8 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                 weights = constraints.weights.viewer().name("constraint_weights"),
                 normals = constraints.normals.viewer().name("constraint_normals"),
                 offsets = constraints.offsets.viewer().name("constraint_offsets"),
+                gradients =
+                    constraints.gradients.viewer().name("constraint_gradients"),
                 edges = surf_edges.viewer().name("surf_edges"),
                 x = context.x.viewer().name("x"),
                 target_edge_length_squares = context.target_edge_length_squares.viewer().name(
@@ -81,6 +83,7 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                                                                 weights,
                                                                 normals,
                                                                 offsets,
+                                                                gradients,
                                                                 I,
                                                                 E,
                                                                 d,
@@ -93,6 +96,7 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                                                                          weights,
                                                                          normals,
                                                                          offsets,
+                                                                         gradients,
                                                                          I);
                    }
                });
