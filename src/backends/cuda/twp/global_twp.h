@@ -34,7 +34,9 @@ class GlobalTWP final : public SimSystem
 
         void ensure_storage(SizeT vertex_count);
         void reset_algorithm_state();
+        void prepare_edge_reference_lengths();
         void proximity_search(Float search_bound);
+        void append_edge_constraints();
         void backward();
         void forward();
         Float  compute_min_clearance(muda::CBufferView<Vector3> positions,

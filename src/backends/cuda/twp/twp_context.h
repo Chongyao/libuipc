@@ -18,8 +18,13 @@ struct TWPContext
     muda::DeviceBuffer<Float>   clearances;
     muda::DeviceBuffer<Float>   backward_violations;
     muda::DeviceBuffer<Float>   backward_lambdas;
+    muda::DeviceBuffer<Float>   lcp_gaps;
+    muda::DeviceBuffer<Float>   lcp_complementarity;
+    muda::DeviceBuffer<Float>   lcp_projected_residual;
     muda::DeviceBuffer<Vector3> backward_corrections;
     muda::DeviceBuffer<IndexT>  backward_correction_counts;
+    muda::DeviceBuffer<Float>   target_edge_lengths;
+    muda::DeviceBuffer<Float>   proximity_distances;
     muda::DeviceBuffer<Float>   safe_step_alphas;
     muda::DeviceBuffer<Float>   forward_step_norms;
     muda::DeviceBuffer<IndexT>  penetration_flags;
@@ -27,6 +32,9 @@ struct TWPContext
     muda::DeviceVar<IndexT> penetration_count;
     muda::DeviceVar<Float>  min_clearance;
     muda::DeviceVar<Float>  max_backward_violation;
+    muda::DeviceVar<Float>  min_lcp_gap;
+    muda::DeviceVar<Float>  max_lcp_complementarity;
+    muda::DeviceVar<Float>  max_lcp_projected_residual;
     muda::DeviceVar<Float>  min_safe_step_alpha;
     muda::DeviceVar<Float>  max_residual;
     muda::DeviceVar<Float>  max_step_norm;
@@ -35,6 +43,9 @@ struct TWPContext
     Float remaining_search_bound = 0.0;
     Float residual_inf           = 1.0;
     Float backward_violation_inf = 0.0;
+    Float lcp_min_gap            = 0.0;
+    Float lcp_complementarity_inf = 0.0;
+    Float lcp_projected_residual_inf = 0.0;
     Float max_forward_step       = 0.0;
     Float min_forward_alpha      = 1.0;
     IndexT forward_limited_vertices = 0;

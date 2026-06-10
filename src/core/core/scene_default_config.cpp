@@ -60,7 +60,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("contact/al-ipc/decay_factor", Float{0.3});
 
     // twp tuning knobs. They are ignored when contact/constitution != "twp".
-    config.create("contact/twp/max_iter", IndexT{16});
+    config.create("contact/twp/max_iter", IndexT{512});
     config.create("contact/twp/eps", Float{1e-4});
     config.create("contact/twp/d_min", Float{0.005});
     config.create("contact/twp/d_max", Float{0.02});

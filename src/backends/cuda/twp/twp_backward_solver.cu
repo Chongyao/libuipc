@@ -131,11 +131,14 @@ void solve_lcp_iteration(TWPContext&        context,
 }
 
 template <typename MassInfo>
-void compute_lcp_violation(TWPContext&        context,
-                           TWPConstraintSet& constraints,
-                           MassInfo)
+void compute_lcp_diagnostics(TWPContext&        context,
+                             TWPConstraintSet& constraints,
+                             MassInfo          mass_info)
 {
     context.backward_violations.fill(0.0);
+    context.lcp_gaps.fill(0.0);
+    context.lcp_complementarity.fill(0.0);
+    context.lcp_projected_residual.fill(0.0);
 
     using namespace muda;
     ParallelFor()
@@ -146,26 +149,53 @@ void compute_lcp_violation(TWPContext&        context,
                 normals = constraints.normals.viewer().name("normals"),
                 offsets = constraints.offsets.viewer().name("offsets"),
                 y = context.y.viewer().name("y"),
+                lambdas = context.backward_lambdas.viewer().name("backward_lambdas"),
                 backward_violations =
-                    context.backward_violations.viewer().name("backward_violations")] __device__(
+                    context.backward_violations.viewer().name("backward_violations"),
+                gaps = context.lcp_gaps.viewer().name("lcp_gaps"),
+                complementarity =
+                    context.lcp_complementarity.viewer().name("lcp_complementarity"),
+                projected_residual = context.lcp_projected_residual.viewer().name(
+                    "lcp_projected_residual"),
+                mass_info] __device__(
                    int c) mutable
                {
                    Vector4i ids = vertex_ids(c);
                    Vector4  ws  = weights(c);
                    Vector3  N   = normals(c);
                    Float    C   = -offsets(c);
+                   Float    diag = 0.0;
+                   Float    n2   = N.squaredNorm();
 
-                   if(N.squaredNorm() <= 1e-24)
+                   if(n2 <= 1e-24)
                        return;
 
                    for(IndexT local_i = 0; local_i < 4; ++local_i)
                    {
                        IndexT v = ids(local_i);
                        if(v >= 0 && ws(local_i) != 0.0)
+                       {
                            C += ws(local_i) * y(v).dot(N);
+
+                           Float inv_mass = mass_info.inv_mass(v);
+                           if(inv_mass > 0.0)
+                               diag += ws(local_i) * ws(local_i) * inv_mass * n2;
+                       }
                    }
 
+                   Float lambda = lambdas(c);
                    backward_violations(c) = C < 0.0 ? -C : 0.0;
+                   gaps(c) = C;
+                   complementarity(c) = lambda * C < 0.0 ? -lambda * C : lambda * C;
+
+                   if(diag > 0.0)
+                   {
+                       Float projected =
+                           lambda - LCPRelaxation * C / diag;
+                       projected = projected > 0.0 ? projected : 0.0;
+                       Float residual = lambda - projected;
+                       projected_residual(c) = residual < 0.0 ? -residual : residual;
+                   }
                });
 }
 
@@ -184,7 +214,10 @@ void TWPBackwardSolver::solve(SolveInfo info)
 
     if(constraints.h_count == 0)
     {
-        context.backward_violation_inf = 0.0;
+        context.backward_violation_inf       = 0.0;
+        context.lcp_min_gap                  = 0.0;
+        context.lcp_complementarity_inf      = 0.0;
+        context.lcp_projected_residual_inf   = 0.0;
         return;
     }
 
@@ -199,21 +232,34 @@ void TWPBackwardSolver::solve(SolveInfo info)
                 info.finite_element_vertex_reporter->vertex_offset(),
                 info.finite_element_method->xs().size()};
             solve_lcp_iteration(context, constraints, mass_info);
-            compute_lcp_violation(context, constraints, mass_info);
+            compute_lcp_diagnostics(context, constraints, mass_info);
         }
         else
         {
             TWPUnitMassInfo mass_info;
             solve_lcp_iteration(context, constraints, mass_info);
-            compute_lcp_violation(context, constraints, mass_info);
+            compute_lcp_diagnostics(context, constraints, mass_info);
         }
 
         muda::DeviceReduce().Max(context.backward_violations.data(),
                                  context.max_backward_violation.data(),
                                  constraints.h_count);
+        muda::DeviceReduce().Min(context.lcp_gaps.data(),
+                                 context.min_lcp_gap.data(),
+                                 constraints.h_count);
+        muda::DeviceReduce().Max(context.lcp_complementarity.data(),
+                                 context.max_lcp_complementarity.data(),
+                                 constraints.h_count);
+        muda::DeviceReduce().Max(context.lcp_projected_residual.data(),
+                                 context.max_lcp_projected_residual.data(),
+                                 constraints.h_count);
         context.backward_violation_inf = context.max_backward_violation;
-        context.backward_iterations    = iter + 1;
-        if(context.backward_violation_inf < BackwardTolerance)
+        context.lcp_min_gap = context.min_lcp_gap;
+        context.lcp_complementarity_inf = context.max_lcp_complementarity;
+        context.lcp_projected_residual_inf = context.max_lcp_projected_residual;
+        context.backward_iterations = iter + 1;
+        if(context.backward_violation_inf < BackwardTolerance
+           && context.lcp_projected_residual_inf < BackwardTolerance)
         {
             context.backward_converged = true;
             break;

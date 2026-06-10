@@ -1,5 +1,6 @@
 #include <app/app.h>
 #include <uipc/uipc.h>
+#include <uipc/constitution/discrete_shell_bending.h>
 #include <uipc/constitution/neo_hookean_shell.h>
 #include <chrono>
 
@@ -35,6 +36,7 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
         REQUIRE(fs::exists(shirt_path));
 
         NeoHookeanShell nhs;
+        DiscreteShellBending dsb;
         scene.contact_tabular().default_model(0.0, 1.0_GPa);
         auto default_contact = scene.contact_tabular().default_element();
 
@@ -48,6 +50,7 @@ TEST_CASE("94_fem_shirt_ground", "[fem][cloth][ground]")
 
         auto moduli = ElasticModuli2D::youngs_poisson(1.0_MPa, 0.49);
         nhs.apply_to(shirt_mesh, moduli, 2e2, 0.0002_m);
+        dsb.apply_to(shirt_mesh, 5.0_kPa);
         default_contact.apply_to(shirt_mesh);
 
         // Keep both cloth-ground contact and cloth self-collision for profiling.

@@ -25,7 +25,7 @@ except ModuleNotFoundError as exc:
 try:
     from uipc import Engine, Logger, Matrix4x4, Scene, SceneIO, World
     from uipc.geometry import SimplicialComplexIO, ground, label_surface, mesh_partition
-    from uipc.constitution import ElasticModuli2D, NeoHookeanShell
+    from uipc.constitution import DiscreteShellBending, ElasticModuli2D, NeoHookeanShell
 except ImportError as exc:
     raise SystemExit(
         "This demo requires the libuipc Python bindings. Build/install pyuipc first."
@@ -116,8 +116,10 @@ def build_scene(args: argparse.Namespace):
     mesh_partition(shirt_mesh, args.part_size)
 
     shell = NeoHookeanShell()
+    bending = DiscreteShellBending()
     moduli = ElasticModuli2D.youngs_poisson(args.young, args.poisson)
     shell.apply_to(shirt_mesh, moduli, args.density, args.thickness)
+    bending.apply_to(shirt_mesh, args.bending_stiffness)
     default_contact.apply_to(shirt_mesh)
 
     shirt_object = scene.objects().create("shirt")
@@ -215,6 +217,7 @@ def parse_args():
     parser.add_argument("--poisson", type=float, default=0.49)
     parser.add_argument("--density", type=float, default=2.0e2)
     parser.add_argument("--thickness", type=float, default=0.0002)
+    parser.add_argument("--bending-stiffness", type=float, default=5.0e3)
     parser.add_argument("--d-hat", type=float, default=0.001)
     parser.add_argument("--twp-debug", action="store_true")
     parser.add_argument("--twp-edge-sigma", type=float, default=1.1)

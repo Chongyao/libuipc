@@ -14,6 +14,7 @@ void TWPContext::ensure_storage(SizeT vertex_count)
     backward_violations.resize(vertex_count);
     backward_corrections.resize(vertex_count);
     backward_correction_counts.resize(vertex_count);
+    proximity_distances.resize(vertex_count);
     safe_step_alphas.resize(vertex_count);
     forward_step_norms.resize(vertex_count);
     penetration_flags.resize(vertex_count);
@@ -25,6 +26,12 @@ void TWPContext::ensure_constraint_storage(SizeT constraint_capacity)
         backward_violations.resize(constraint_capacity);
     if(backward_lambdas.size() < constraint_capacity)
         backward_lambdas.resize(constraint_capacity);
+    if(lcp_gaps.size() < constraint_capacity)
+        lcp_gaps.resize(constraint_capacity);
+    if(lcp_complementarity.size() < constraint_capacity)
+        lcp_complementarity.resize(constraint_capacity);
+    if(lcp_projected_residual.size() < constraint_capacity)
+        lcp_projected_residual.resize(constraint_capacity);
 }
 
 void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
@@ -40,14 +47,21 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     residual.fill(1.0);
     backward_violations.fill(0.0);
     backward_lambdas.fill(0.0);
+    lcp_gaps.fill(0.0);
+    lcp_complementarity.fill(0.0);
+    lcp_projected_residual.fill(0.0);
     backward_corrections.fill(Vector3::Zero());
     backward_correction_counts.fill(0);
+    proximity_distances.fill(Float{1e30});
     safe_step_alphas.fill(1.0);
     forward_step_norms.fill(0.0);
 
     remaining_search_bound = 0.0;
     residual_inf           = 1.0;
     backward_violation_inf = 0.0;
+    lcp_min_gap            = 0.0;
+    lcp_complementarity_inf = 0.0;
+    lcp_projected_residual_inf = 0.0;
     max_forward_step       = 0.0;
     min_forward_alpha      = 1.0;
     forward_limited_vertices = 0;
