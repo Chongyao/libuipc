@@ -83,11 +83,15 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                        if(signed_dist < min_dist + search_bound)
                        {
                            IndexT I = atomic_add(count.data(), 1);
-                           types(I) = TWPConstraintType::VertexHalfPlane;
-                           vertex_ids(I) = Vector4i{v, -1, -1, -1};
-                           weights(I)    = Vector4{1.0, 0.0, 0.0, 0.0};
-                           normals(I)    = N;
-                           offsets(I)    = P.dot(N) + min_dist;
+                           write_vertex_half_plane_constraint(types,
+                                                              vertex_ids,
+                                                              weights,
+                                                              normals,
+                                                              offsets,
+                                                              I,
+                                                              v,
+                                                              N,
+                                                              P.dot(N) + min_dist);
                        }
                    }
                });

@@ -49,7 +49,7 @@ void GlobalTWP::Impl::forward()
     constexpr Float ForwardSafety = 0.99;
 
     context.proximity_distances.fill(Float{1e30});
-    context.safe_step_alphas.fill(1.0);
+    context.diagnostics.forward.safe_step_alphas.fill(1.0);
 
     const IndexT constraint_count = constraints.host_total_constraint_count();
     if(constraint_count > 0)
@@ -90,14 +90,15 @@ void GlobalTWP::Impl::forward()
                 y = context.y.viewer().name("y"),
                 residual = context.residual.viewer().name("residual"),
                 forward_step_norms =
-                    context.forward_step_norms.viewer().name("forward_step_norms"),
+                    context.diagnostics.forward.step_norms.viewer().name("forward_step_norms"),
                 limited_flags =
-                    context.penetration_flags.viewer().name("forward_limited_flags"),
+                    context.diagnostics.forward.limited_flags.viewer().name(
+                        "forward_limited_flags"),
                 proximity_distances =
                     context.proximity_distances.viewer().name("proximity_distances"),
                 safe_step_alphas =
-                    context.safe_step_alphas.viewer().name("safe_step_alphas")] __device__(
-                   int i) mutable
+                    context.diagnostics.forward.safe_step_alphas.viewer().name(
+                        "safe_step_alphas")] __device__(int i) mutable
                {
                    Vector3 old_x = x(i);
                    Vector3 dir   = y(i) - old_x;
@@ -124,22 +125,22 @@ void GlobalTWP::Impl::forward()
                    limited_flags(i) = alpha_i < 1.0 ? 1 : 0;
                });
 
-    DeviceReduce().Min(context.safe_step_alphas.data(),
-                       context.min_safe_step_alpha.data(),
-                       context.safe_step_alphas.size());
+    DeviceReduce().Min(context.diagnostics.forward.safe_step_alphas.data(),
+                       context.diagnostics.forward.min_safe_step_alpha.data(),
+                       context.diagnostics.forward.safe_step_alphas.size());
     DeviceReduce().Max(context.residual.data(),
-                       context.max_residual.data(),
+                       context.diagnostics.forward.max_residual.data(),
                        context.residual.size());
-    DeviceReduce().Max(context.forward_step_norms.data(),
-                       context.max_step_norm.data(),
-                       context.forward_step_norms.size());
-    DeviceReduce().Sum(context.penetration_flags.data(),
-                       context.forward_limited_count.data(),
-                       context.penetration_flags.size());
+    DeviceReduce().Max(context.diagnostics.forward.step_norms.data(),
+                       context.diagnostics.forward.max_step_norm.data(),
+                       context.diagnostics.forward.step_norms.size());
+    DeviceReduce().Sum(context.diagnostics.forward.limited_flags.data(),
+                       context.diagnostics.forward.limited_count.data(),
+                       context.diagnostics.forward.limited_flags.size());
 
-    context.residual_inf     = context.max_residual;
-    context.max_forward_step = context.max_step_norm;
-    context.min_forward_alpha = context.min_safe_step_alpha;
-    context.forward_limited_vertices = context.forward_limited_count;
+    context.diagnostics.forward.residual_inf     = context.diagnostics.forward.max_residual;
+    context.diagnostics.forward.max_step = context.diagnostics.forward.max_step_norm;
+    context.diagnostics.forward.min_alpha = context.diagnostics.forward.min_safe_step_alpha;
+    context.diagnostics.forward.limited_vertices = context.diagnostics.forward.limited_count;
 }
 }  // namespace uipc::backend::cuda

@@ -122,9 +122,9 @@ void GlobalTWP::Impl::project()
         backward();
         forward();
 
-        context.remaining_search_bound -= 2.0 * context.max_forward_step;
+        context.remaining_search_bound -= 2.0 * context.diagnostics.forward.max_step;
 
-        if(context.residual_inf < eps)
+        if(context.diagnostics.forward.residual_inf < eps)
         {
             converged = true;
             break;
@@ -136,13 +136,13 @@ void GlobalTWP::Impl::project()
         logger::warn(
             "TWP exhausted: residual={}, eps={}, steps={}, max_iter={}, "
             "max_step={}, min_alpha={}, limited={}",
-            context.residual_inf,
+            context.diagnostics.forward.residual_inf,
             eps,
             step_count,
             max_iter,
-            context.max_forward_step,
-            context.min_forward_alpha,
-            context.forward_limited_vertices);
+            context.diagnostics.forward.max_step,
+            context.diagnostics.forward.min_alpha,
+            context.diagnostics.forward.limited_vertices);
     }
 
     global_vertex_manager->overwrite_positions(context.x.view());

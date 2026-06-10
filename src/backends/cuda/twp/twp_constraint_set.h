@@ -11,6 +11,70 @@ enum class TWPConstraintType : IndexT
     EdgeLengthUpperBound = 1,
 };
 
+template <typename TypeView,
+          typename VertexIdView,
+          typename WeightView,
+          typename NormalView,
+          typename OffsetView>
+MUDA_GENERIC void write_vertex_half_plane_constraint(TypeView&       types,
+                                                     VertexIdView&   vertex_ids,
+                                                     WeightView&     weights,
+                                                     NormalView&     normals,
+                                                     OffsetView&     offsets,
+                                                     IndexT          constraint_id,
+                                                     IndexT          vertex_id,
+                                                     const Vector3&  normal,
+                                                     Float           offset)
+{
+    types(constraint_id)      = TWPConstraintType::VertexHalfPlane;
+    vertex_ids(constraint_id) = Vector4i{vertex_id, -1, -1, -1};
+    weights(constraint_id)    = Vector4{1.0, 0.0, 0.0, 0.0};
+    normals(constraint_id)    = normal;
+    offsets(constraint_id)    = offset;
+}
+
+template <typename TypeView,
+          typename VertexIdView,
+          typename WeightView,
+          typename NormalView,
+          typename OffsetView>
+MUDA_GENERIC void write_edge_length_upper_bound_constraint(TypeView&       types,
+                                                           VertexIdView&   vertex_ids,
+                                                           WeightView&     weights,
+                                                           NormalView&     normals,
+                                                           OffsetView&     offsets,
+                                                           IndexT          constraint_id,
+                                                           const Vector2i& edge,
+                                                           const Vector3&  direction,
+                                                           Float           rhs)
+{
+    types(constraint_id)      = TWPConstraintType::EdgeLengthUpperBound;
+    vertex_ids(constraint_id) = Vector4i{edge.x(), edge.y(), -1, -1};
+    weights(constraint_id)    = Vector4{-2.0, 2.0, 0.0, 0.0};
+    normals(constraint_id)    = direction;
+    offsets(constraint_id)    = -rhs;
+}
+
+template <typename TypeView,
+          typename VertexIdView,
+          typename WeightView,
+          typename NormalView,
+          typename OffsetView>
+MUDA_GENERIC void write_disabled_edge_length_upper_bound_constraint(
+    TypeView&     types,
+    VertexIdView& vertex_ids,
+    WeightView&   weights,
+    NormalView&   normals,
+    OffsetView&   offsets,
+    IndexT        constraint_id)
+{
+    types(constraint_id)      = TWPConstraintType::EdgeLengthUpperBound;
+    vertex_ids(constraint_id) = Vector4i{-1, -1, -1, -1};
+    weights(constraint_id)    = Vector4::Zero();
+    normals(constraint_id)    = Vector3::Zero();
+    offsets(constraint_id)    = 0.0;
+}
+
 struct TWPConstraintSet
 {
     muda::DeviceBuffer<TWPConstraintType> types;

@@ -137,10 +137,10 @@ void compute_lcp_diagnostics(TWPContext&        context,
                              MassInfo          mass_info)
 {
     const IndexT constraint_count = constraints.host_total_constraint_count();
-    context.backward_violations.fill(0.0);
-    context.lcp_gaps.fill(0.0);
-    context.lcp_complementarity.fill(0.0);
-    context.lcp_projected_residual.fill(0.0);
+    context.diagnostics.backward.backward_violations.fill(0.0);
+    context.diagnostics.backward.lcp_gaps.fill(0.0);
+    context.diagnostics.backward.lcp_complementarity.fill(0.0);
+    context.diagnostics.backward.lcp_projected_residual.fill(0.0);
 
     using namespace muda;
     ParallelFor()
@@ -153,12 +153,15 @@ void compute_lcp_diagnostics(TWPContext&        context,
                 y = context.y.viewer().name("y"),
                 lambdas = context.backward_lambdas.viewer().name("backward_lambdas"),
                 backward_violations =
-                    context.backward_violations.viewer().name("backward_violations"),
-                gaps = context.lcp_gaps.viewer().name("lcp_gaps"),
+                    context.diagnostics.backward.backward_violations.viewer().name(
+                        "backward_violations"),
+                gaps = context.diagnostics.backward.lcp_gaps.viewer().name("lcp_gaps"),
                 complementarity =
-                    context.lcp_complementarity.viewer().name("lcp_complementarity"),
-                projected_residual = context.lcp_projected_residual.viewer().name(
-                    "lcp_projected_residual"),
+                    context.diagnostics.backward.lcp_complementarity.viewer().name(
+                        "lcp_complementarity"),
+                projected_residual =
+                    context.diagnostics.backward.lcp_projected_residual.viewer().name(
+                        "lcp_projected_residual"),
                 mass_info] __device__(
                    int c) mutable
                {
@@ -212,15 +215,15 @@ void TWPBackwardSolver::solve(SolveInfo info)
     muda::BufferLaunch().copy<Vector3>(context.y.view(),
                                        std::as_const(context.target_y).view());
     context.backward_lambdas.fill(0.0);
-    context.backward_iterations = 0;
-    context.backward_converged  = true;
+    context.diagnostics.backward.iterations = 0;
+    context.diagnostics.backward.converged  = true;
 
     if(constraint_count == 0)
     {
-        context.backward_violation_inf       = 0.0;
-        context.lcp_min_gap                  = 0.0;
-        context.lcp_complementarity_inf      = 0.0;
-        context.lcp_projected_residual_inf   = 0.0;
+        context.diagnostics.backward.violation_inf = 0.0;
+        context.diagnostics.backward.lcp_min_gap = 0.0;
+        context.diagnostics.backward.lcp_complementarity_inf = 0.0;
+        context.diagnostics.backward.lcp_projected_residual_inf = 0.0;
         return;
     }
 
@@ -244,30 +247,36 @@ void TWPBackwardSolver::solve(SolveInfo info)
             compute_lcp_diagnostics(context, constraints, mass_info);
         }
 
-        muda::DeviceReduce().Max(context.backward_violations.data(),
-                                 context.max_backward_violation.data(),
+        muda::DeviceReduce().Max(
+            context.diagnostics.backward.backward_violations.data(),
+            context.diagnostics.backward.max_backward_violation.data(),
+            constraint_count);
+        muda::DeviceReduce().Min(context.diagnostics.backward.lcp_gaps.data(),
+                                 context.diagnostics.backward.min_lcp_gap.data(),
                                  constraint_count);
-        muda::DeviceReduce().Min(context.lcp_gaps.data(),
-                                 context.min_lcp_gap.data(),
-                                 constraint_count);
-        muda::DeviceReduce().Max(context.lcp_complementarity.data(),
-                                 context.max_lcp_complementarity.data(),
-                                 constraint_count);
-        muda::DeviceReduce().Max(context.lcp_projected_residual.data(),
-                                 context.max_lcp_projected_residual.data(),
-                                 constraint_count);
-        context.backward_violation_inf = context.max_backward_violation;
-        context.lcp_min_gap = context.min_lcp_gap;
-        context.lcp_complementarity_inf = context.max_lcp_complementarity;
-        context.lcp_projected_residual_inf = context.max_lcp_projected_residual;
-        context.backward_iterations = iter + 1;
-        if(context.backward_violation_inf < BackwardTolerance
-           && context.lcp_projected_residual_inf < BackwardTolerance)
+        muda::DeviceReduce().Max(
+            context.diagnostics.backward.lcp_complementarity.data(),
+            context.diagnostics.backward.max_lcp_complementarity.data(),
+            constraint_count);
+        muda::DeviceReduce().Max(
+            context.diagnostics.backward.lcp_projected_residual.data(),
+            context.diagnostics.backward.max_lcp_projected_residual.data(),
+            constraint_count);
+        context.diagnostics.backward.violation_inf =
+            context.diagnostics.backward.max_backward_violation;
+        context.diagnostics.backward.lcp_min_gap = context.diagnostics.backward.min_lcp_gap;
+        context.diagnostics.backward.lcp_complementarity_inf =
+            context.diagnostics.backward.max_lcp_complementarity;
+        context.diagnostics.backward.lcp_projected_residual_inf =
+            context.diagnostics.backward.max_lcp_projected_residual;
+        context.diagnostics.backward.iterations = iter + 1;
+        if(context.diagnostics.backward.violation_inf < BackwardTolerance
+           && context.diagnostics.backward.lcp_projected_residual_inf < BackwardTolerance)
         {
-            context.backward_converged = true;
+            context.diagnostics.backward.converged = true;
             break;
         }
-        context.backward_converged = false;
+        context.diagnostics.backward.converged = false;
     }
 }
 }  // namespace uipc::backend::cuda

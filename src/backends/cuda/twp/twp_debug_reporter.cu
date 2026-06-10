@@ -15,7 +15,7 @@ Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> position
     if(!half_plane || !half_plane_vertex_reporter || half_plane->positions().size() == 0)
         return 0.0;
 
-    context.clearances.resize(positions.size());
+    context.diagnostics.debug.clearances.resize(positions.size());
 
     SizeT plane_count = half_plane->positions().size();
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
@@ -24,7 +24,7 @@ Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> position
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(positions.size(),
-               [clearances = context.clearances.viewer().name("clearances"),
+               [clearances = context.diagnostics.debug.clearances.viewer().name("clearances"),
                 positions = positions.viewer().name("positions"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 plane_positions = half_plane->positions().viewer().name("plane_positions"),
@@ -52,11 +52,11 @@ Float GlobalTWP::Impl::compute_min_clearance(muda::CBufferView<Vector3> position
                    clearances(v) = min_clearance;
                });
 
-    DeviceReduce().Min(context.clearances.data(),
-                       context.min_clearance.data(),
+    DeviceReduce().Min(context.diagnostics.debug.clearances.data(),
+                       context.diagnostics.debug.min_clearance.data(),
                        positions.size());
 
-    return context.min_clearance;
+    return context.diagnostics.debug.min_clearance;
 }
 
 IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> positions,
@@ -65,7 +65,7 @@ IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> pos
     if(!half_plane || !half_plane_vertex_reporter || half_plane->positions().size() == 0)
         return 0;
 
-    context.penetration_flags.resize(positions.size());
+    context.diagnostics.debug.penetration_flags.resize(positions.size());
 
     SizeT plane_count = half_plane->positions().size();
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
@@ -74,7 +74,8 @@ IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> pos
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(positions.size(),
-               [flags = context.penetration_flags.viewer().name("penetration_flags"),
+               [flags = context.diagnostics.debug.penetration_flags.viewer().name(
+                    "penetration_flags"),
                 positions = positions.viewer().name("positions"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 plane_positions = half_plane->positions().viewer().name("plane_positions"),
@@ -106,10 +107,10 @@ IndexT GlobalTWP::Impl::count_penetrated_vertices(muda::CBufferView<Vector3> pos
                    flags(v) = penetrated;
                });
 
-    DeviceReduce().Sum(context.penetration_flags.data(),
-                       context.penetration_count.data(),
-                       context.penetration_flags.size());
-    return context.penetration_count;
+    DeviceReduce().Sum(context.diagnostics.debug.penetration_flags.data(),
+                       context.diagnostics.debug.penetration_count.data(),
+                       context.diagnostics.debug.penetration_flags.size());
+    return context.diagnostics.debug.penetration_count;
 }
 
 void GlobalTWP::Impl::debug_log_state(std::string_view stage)
@@ -176,16 +177,16 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
             fem_vertex_count,
             fem_min_clearance,
             fem_penetration_count,
-            context.backward_violation_inf,
-            context.lcp_min_gap,
-            context.lcp_complementarity_inf,
-            context.lcp_projected_residual_inf,
-            context.backward_iterations,
-            context.backward_converged,
-            context.residual_inf,
-            context.max_forward_step,
-            context.min_forward_alpha,
-            context.forward_limited_vertices);
+            context.diagnostics.backward.violation_inf,
+            context.diagnostics.backward.lcp_min_gap,
+            context.diagnostics.backward.lcp_complementarity_inf,
+            context.diagnostics.backward.lcp_projected_residual_inf,
+            context.diagnostics.backward.iterations,
+            context.diagnostics.backward.converged,
+            context.diagnostics.forward.residual_inf,
+            context.diagnostics.forward.max_step,
+            context.diagnostics.forward.min_alpha,
+            context.diagnostics.forward.limited_vertices);
     }
 }
 }  // namespace uipc::backend::cuda

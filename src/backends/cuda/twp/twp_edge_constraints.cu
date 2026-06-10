@@ -71,22 +71,29 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                    IndexT I = edge_offset + e;
                    Vector2i E = edges(e);
                    Float target_len2 = target_edge_length_squares(e);
-                   types(I) = TWPConstraintType::EdgeLengthUpperBound;
-                   vertex_ids(I) = Vector4i{E.x(), E.y(), -1, -1};
                    if(target_len2 > 1e-24)
                    {
                        Vector3 d = x(E.x()) - x(E.y());
                        Float d2 = d.squaredNorm();
                        Float rhs = sigma * sigma * target_len2 + d2;
-                       weights(I) = Vector4{-2.0, 2.0, 0.0, 0.0};
-                       normals(I) = d;
-                       offsets(I) = -rhs;
+                       write_edge_length_upper_bound_constraint(types,
+                                                                vertex_ids,
+                                                                weights,
+                                                                normals,
+                                                                offsets,
+                                                                I,
+                                                                E,
+                                                                d,
+                                                                rhs);
                    }
                    else
                    {
-                       weights(I) = Vector4::Zero();
-                       normals(I) = Vector3::Zero();
-                       offsets(I) = 0.0;
+                       write_disabled_edge_length_upper_bound_constraint(types,
+                                                                         vertex_ids,
+                                                                         weights,
+                                                                         normals,
+                                                                         offsets,
+                                                                         I);
                    }
                });
 
