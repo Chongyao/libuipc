@@ -13,7 +13,7 @@
 
 ## High Priority
 
-- `proximity_search()` currently searches from `context.target_y`, but Algorithm 1 uses `Proximity_Search(x^(l), Dmax)`. The proximity set can become inconsistent with the current forward state. It should search from `context.x`; `target_y` should remain the Newton target `y^0`.
+- Done: `proximity_search()` now searches from the current forward state `context.x`, matching Algorithm 1's `Proximity_Search(x^(l), Dmax)`. `context.target_y` remains the Newton target `y^0`.
 - TWP currently only supports half-plane proximity. It does not use cloth self-proximity or existing simplex candidate systems, so it cannot prevent cloth self-intersection or self-compression.
 - Done: The backward LCP solver now uses colored projected Gauss-Seidel for edge constraints. Edge colors are built from fixed mesh edge topology and reused across PH contact set changes. PH constraints are solved afterward as a separate parallel batch.
 - Edge constraint refresh has separate timing, but still refreshes all surface edges every TWP iteration. It should eventually use active-region filtering.

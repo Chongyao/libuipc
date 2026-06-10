@@ -18,7 +18,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     if(!half_plane || !half_plane_vertex_reporter || half_plane->positions().size() == 0)
         return;
 
-    SizeT vertex_count = context.target_y.size();
+    SizeT vertex_count = context.x.size();
     SizeT plane_count  = half_plane->positions().size();
     SizeT edge_count = global_simplicial_surface_manager ?
                            global_simplicial_surface_manager->surf_edges().size() :
@@ -41,7 +41,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                 weights = constraints.weights.viewer().name("constraint_weights"),
                 normals = constraints.normals.viewer().name("constraint_normals"),
                 offsets = constraints.offsets.viewer().name("constraint_offsets"),
-                y = context.target_y.viewer().name("target_y"),
+                x = context.x.viewer().name("x"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 contact_ids =
                     global_vertex_manager->contact_element_ids().viewer().name("contact_ids"),
@@ -77,7 +77,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                        const Vector3& P = plane_positions(h);
                        const Vector3& N = plane_normals(h);
 
-                       Float signed_dist = (y(v) - P).dot(N);
+                       Float signed_dist = (x(v) - P).dot(N);
                        Float min_dist    = thicknesses(v);
 
                        if(signed_dist < min_dist + search_bound)
