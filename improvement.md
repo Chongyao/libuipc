@@ -10,8 +10,9 @@
 
 ## Architecture
 
-- `global_twp.cu` owns too many responsibilities: system registration, proximity search, edge constraint assembly, forward stepping, debug reductions, and state write-back.
-- `TWPConstraintSet` is a generic linear constraint container, but type-specific semantics are hidden in `weights`, `normals`, and `offsets`. This will become fragile when adding vertex-triangle and edge-edge volume constraints.
+- Done: `global_twp.cu` now owns system registration, dependency binding, projection orchestration, and state write-back only. Proximity search, edge constraint refresh, forward stepping, and debug reporting are split into separate TWP translation units.
+- Done: CUDA backend source discovery now uses `CONFIGURE_DEPENDS`, so newly split backend files are picked up by the normal CMake regeneration path.
+- Partially done: `TWPConstraintSet` now exposes host-side contact/edge/total counts through semantic accessors instead of public `h_*` fields. The linear constraint payload is still generic, so vertex-triangle and edge-edge constraints should eventually get typed builders or typed views instead of encoding semantics only in `weights`, `normals`, and `offsets`.
 - `TWPContext` mixes algorithm state, diagnostics, temporary debug buffers, and forward-step flags. Diagnostics should eventually be separated from core solver state.
 - Done: Function names must match behavior. For example, the edge constraint update is now named as a refresh operation instead of an append-only operation.
 

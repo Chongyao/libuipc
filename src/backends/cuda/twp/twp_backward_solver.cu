@@ -51,12 +51,13 @@ void solve_lcp_iteration(TWPContext&        context,
                          TWPConstraintSet& constraints,
                          MassInfo          mass_info)
 {
+    const IndexT constraint_count = constraints.host_total_constraint_count();
     context.backward_corrections.fill(Vector3::Zero());
 
     using namespace muda;
     ParallelFor()
         .file_line(__FILE__, __LINE__)
-        .apply(constraints.h_count,
+        .apply(constraint_count,
                [vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
                 weights = constraints.weights.viewer().name("weights"),
                 normals = constraints.normals.viewer().name("normals"),
@@ -135,6 +136,7 @@ void compute_lcp_diagnostics(TWPContext&        context,
                              TWPConstraintSet& constraints,
                              MassInfo          mass_info)
 {
+    const IndexT constraint_count = constraints.host_total_constraint_count();
     context.backward_violations.fill(0.0);
     context.lcp_gaps.fill(0.0);
     context.lcp_complementarity.fill(0.0);
@@ -143,7 +145,7 @@ void compute_lcp_diagnostics(TWPContext&        context,
     using namespace muda;
     ParallelFor()
         .file_line(__FILE__, __LINE__)
-        .apply(constraints.h_count,
+        .apply(constraint_count,
                [vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
                 weights = constraints.weights.viewer().name("weights"),
                 normals = constraints.normals.viewer().name("normals"),
@@ -205,6 +207,7 @@ void TWPBackwardSolver::solve(SolveInfo info)
 
     auto& context     = *info.context;
     auto& constraints = *info.constraints;
+    const IndexT constraint_count = constraints.host_total_constraint_count();
 
     muda::BufferLaunch().copy<Vector3>(context.y.view(),
                                        std::as_const(context.target_y).view());
@@ -212,7 +215,7 @@ void TWPBackwardSolver::solve(SolveInfo info)
     context.backward_iterations = 0;
     context.backward_converged  = true;
 
-    if(constraints.h_count == 0)
+    if(constraint_count == 0)
     {
         context.backward_violation_inf       = 0.0;
         context.lcp_min_gap                  = 0.0;
@@ -243,16 +246,16 @@ void TWPBackwardSolver::solve(SolveInfo info)
 
         muda::DeviceReduce().Max(context.backward_violations.data(),
                                  context.max_backward_violation.data(),
-                                 constraints.h_count);
+                                 constraint_count);
         muda::DeviceReduce().Min(context.lcp_gaps.data(),
                                  context.min_lcp_gap.data(),
-                                 constraints.h_count);
+                                 constraint_count);
         muda::DeviceReduce().Max(context.lcp_complementarity.data(),
                                  context.max_lcp_complementarity.data(),
-                                 constraints.h_count);
+                                 constraint_count);
         muda::DeviceReduce().Max(context.lcp_projected_residual.data(),
                                  context.max_lcp_projected_residual.data(),
-                                 constraints.h_count);
+                                 constraint_count);
         context.backward_violation_inf = context.max_backward_violation;
         context.lcp_min_gap = context.min_lcp_gap;
         context.lcp_complementarity_inf = context.max_lcp_complementarity;
