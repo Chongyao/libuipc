@@ -141,7 +141,6 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     if(constraints.types.size() < max_count)
         constraints.resize(max_count);
     context.ensure_constraint_storage(max_count);
-    context.contact_vertex_flags.fill(0);
 
     IndexT plane_vertex_offset = half_plane_vertex_reporter->vertex_offset();
 
@@ -156,8 +155,6 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                 weights = constraints.weights.viewer().name("constraint_weights"),
                 normals = constraints.normals.viewer().name("constraint_normals"),
                 offsets = constraints.offsets.viewer().name("constraint_offsets"),
-                contact_vertex_flags =
-                    context.contact_vertex_flags.viewer().name("contact_vertex_flags"),
                 y = context.target_y.viewer().name("target_y"),
                 thicknesses = global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                 contact_ids =
@@ -205,7 +202,6 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                            weights(I)    = Vector4{1.0, 0.0, 0.0, 0.0};
                            normals(I)    = N;
                            offsets(I)    = P.dot(N) + min_dist;
-                           contact_vertex_flags(v) = 1;
                        }
                    }
                });
@@ -215,53 +211,45 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     if(global_simplicial_surface_manager && edge_count > 0
        && constraints.h_contact_count > 0)
     {
+        IndexT edge_offset = constraints.h_contact_count;
         Float  sigma = edge_sigma_attr ? edge_sigma_attr->view()[0] : 1.1;
         UIPC_ASSERT(sigma > 0.0, "contact/twp/edge_sigma must be positive.");
 
         ParallelFor()
             .file_line(__FILE__, __LINE__)
             .apply(edge_count,
-                   [count = constraints.count.viewer().name("constraint_count"),
-                    types = constraints.types.viewer().name("constraint_types"),
+                   [types = constraints.types.viewer().name("constraint_types"),
                     vertex_ids =
                         constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
                     weights = constraints.weights.viewer().name("constraint_weights"),
                     normals = constraints.normals.viewer().name("constraint_normals"),
                     offsets = constraints.offsets.viewer().name("constraint_offsets"),
                     edges = surf_edges.viewer().name("surf_edges"),
-                    contact_vertex_flags =
-                        context.contact_vertex_flags.viewer().name("contact_vertex_flags"),
-                    x = context.x.viewer().name("x"),
                     target_y = context.target_y.viewer().name("target_y"),
+                    edge_offset,
                     sigma] __device__(int e) mutable
                    {
+                       IndexT I = edge_offset + e;
                        Vector2i E = edges(e);
-                       if(contact_vertex_flags(E.x()) == 0
-                          && contact_vertex_flags(E.y()) == 0)
-                           return;
-
-                       IndexT I = atomic_add(count.data(), 1);
-                       Vector3 x_ij = x(E.x()) - x(E.y());
-                       Float ref_len = x_ij.norm();
                        Vector3 y_ij = target_y(E.x()) - target_y(E.y());
-                       Float y_len = y_ij.norm();
+                       Float target_len = y_ij.norm();
                        Vector3 dir = Vector3::Zero();
-                       Float min_len = 0.0;
-                       if(ref_len > 1e-12)
+                       Float max_len = 0.0;
+                       if(target_len > 1e-12)
                        {
-                           dir     = y_len > 1e-12 ? y_ij / y_len : x_ij / ref_len;
-                           min_len = ref_len / sigma;
+                           dir     = y_ij / target_len;
+                           max_len = sigma * target_len;
                        }
 
-                       types(I) = TWPConstraintType::EdgeLengthLowerBound;
+                       types(I) = TWPConstraintType::EdgeLengthUpperBound;
                        vertex_ids(I) = Vector4i{E.x(), E.y(), -1, -1};
-                       weights(I)    = Vector4{1.0, -1.0, 0.0, 0.0};
+                       weights(I)    = Vector4{-1.0, 1.0, 0.0, 0.0};
                        normals(I)    = dir;
-                       offsets(I)    = min_len;
+                       offsets(I)    = -max_len;
                    });
 
-        constraints.h_count      = constraints.count;
-        constraints.h_edge_count = constraints.h_count - constraints.h_contact_count;
+        constraints.h_edge_count = edge_count;
+        constraints.count        = edge_offset + edge_count;
     }
 
     constraints.h_count = constraints.count;
@@ -439,6 +427,8 @@ void GlobalTWP::Impl::forward()
                 residual = context.residual.viewer().name("residual"),
                 forward_step_norms =
                     context.forward_step_norms.viewer().name("forward_step_norms"),
+                limited_flags =
+                    context.penetration_flags.viewer().name("forward_limited_flags"),
                 safe_step_alphas =
                     context.safe_step_alphas.viewer().name("safe_step_alphas")] __device__(int i) mutable
                {
@@ -449,17 +439,26 @@ void GlobalTWP::Impl::forward()
                    x(i)          = new_x;
                    residual(i) *= (1.0 - alpha_i);
                    forward_step_norms(i) = step.norm();
+                   limited_flags(i) = alpha_i < 1.0 ? 1 : 0;
                });
 
+    DeviceReduce().Min(context.safe_step_alphas.data(),
+                       context.min_safe_step_alpha.data(),
+                       context.safe_step_alphas.size());
     DeviceReduce().Max(context.residual.data(),
                        context.max_residual.data(),
                        context.residual.size());
     DeviceReduce().Max(context.forward_step_norms.data(),
                        context.max_step_norm.data(),
                        context.forward_step_norms.size());
+    DeviceReduce().Sum(context.penetration_flags.data(),
+                       context.forward_limited_count.data(),
+                       context.penetration_flags.size());
 
     context.residual_inf     = context.max_residual;
     context.max_forward_step = context.max_step_norm;
+    context.min_forward_alpha = context.min_safe_step_alpha;
+    context.forward_limited_vertices = context.forward_limited_count;
 }
 
 void GlobalTWP::Impl::project()
@@ -559,7 +558,7 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
                 "target[min={}, pen={}], global[min={}, pen={}], "
                 "fem[offset={}, count={}, min={}, pen={}], "
                 "backward[violation={}, iter={}, converged={}], "
-                "forward[residual={}, max_step={}]",
+                "forward[residual={}, max_step={}, min_alpha={}, limited={}]",
                 stage,
                 plane_count,
                 has_half_plane && has_half_plane_vertex_reporter,
@@ -578,7 +577,9 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
                 context.backward_iterations,
                 context.backward_converged,
                 context.residual_inf,
-                context.max_forward_step);
+                context.max_forward_step,
+                context.min_forward_alpha,
+                context.forward_limited_vertices);
         }
     }
 }

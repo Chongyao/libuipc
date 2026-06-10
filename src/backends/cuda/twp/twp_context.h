@@ -22,7 +22,6 @@ struct TWPContext
     muda::DeviceBuffer<IndexT>  backward_correction_counts;
     muda::DeviceBuffer<Float>   safe_step_alphas;
     muda::DeviceBuffer<Float>   forward_step_norms;
-    muda::DeviceBuffer<IndexT>  contact_vertex_flags;
     muda::DeviceBuffer<IndexT>  penetration_flags;
 
     muda::DeviceVar<IndexT> penetration_count;
@@ -31,11 +30,14 @@ struct TWPContext
     muda::DeviceVar<Float>  min_safe_step_alpha;
     muda::DeviceVar<Float>  max_residual;
     muda::DeviceVar<Float>  max_step_norm;
+    muda::DeviceVar<IndexT> forward_limited_count;
 
     Float remaining_search_bound = 0.0;
     Float residual_inf           = 1.0;
     Float backward_violation_inf = 0.0;
     Float max_forward_step       = 0.0;
+    Float min_forward_alpha      = 1.0;
+    IndexT forward_limited_vertices = 0;
     IndexT backward_iterations   = 0;
     bool   backward_converged    = false;
 

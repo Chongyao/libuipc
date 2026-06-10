@@ -8,7 +8,7 @@ namespace uipc::backend::cuda
 enum class TWPConstraintType : IndexT
 {
     VertexHalfPlane = 0,
-    EdgeLengthLowerBound = 1,
+    EdgeLengthUpperBound = 1,
 };
 
 struct TWPConstraintSet

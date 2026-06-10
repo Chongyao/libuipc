@@ -16,7 +16,6 @@ void TWPContext::ensure_storage(SizeT vertex_count)
     backward_correction_counts.resize(vertex_count);
     safe_step_alphas.resize(vertex_count);
     forward_step_norms.resize(vertex_count);
-    contact_vertex_flags.resize(vertex_count);
     penetration_flags.resize(vertex_count);
 }
 
@@ -45,12 +44,13 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     backward_correction_counts.fill(0);
     safe_step_alphas.fill(1.0);
     forward_step_norms.fill(0.0);
-    contact_vertex_flags.fill(0);
 
     remaining_search_bound = 0.0;
     residual_inf           = 1.0;
     backward_violation_inf = 0.0;
     max_forward_step       = 0.0;
+    min_forward_alpha      = 1.0;
+    forward_limited_vertices = 0;
     backward_iterations    = 0;
     backward_converged     = false;
 }
