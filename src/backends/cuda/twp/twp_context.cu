@@ -72,8 +72,6 @@ void TWPContext::ensure_storage(SizeT vertex_count)
     y.resize(vertex_count);
     target_y.resize(vertex_count);
     residual.resize(vertex_count);
-    backward_corrections.resize(vertex_count);
-    backward_correction_counts.resize(vertex_count);
     proximity_distances.resize(vertex_count);
     diagnostics.ensure_vertex_storage(vertex_count);
 }
@@ -97,8 +95,6 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     muda::BufferLaunch().copy<Vector3>(target_y.view(), positions);
     residual.fill(1.0);
     backward_lambdas.fill(0.0);
-    backward_corrections.fill(Vector3::Zero());
-    backward_correction_counts.fill(0);
     proximity_distances.fill(Float{1e30});
     diagnostics.reset();
 

@@ -6,9 +6,9 @@
 #include <finite_element/finite_element_vertex_reporter.h>
 #include <uipc/common/timer.h>
 #include <muda/buffer/buffer_launch.h>
-#include <muda/ext/eigen/atomic.h>
 #include <muda/launch/parallel_for.h>
 #include <muda/cub/device/device_reduce.h>
+#include <unordered_set>
 #include <utility>
 
 namespace uipc::backend::cuda
@@ -46,13 +46,78 @@ struct TWPFEMMassInfo
     }
 };
 
-template <typename MassInfo>
-void solve_lcp_iteration(TWPContext&        context,
-                         TWPConstraintSet& constraints,
-                         MassInfo          mass_info)
+template <typename VertexIdView,
+          typename WeightView,
+          typename NormalView,
+          typename OffsetView,
+          typename PositionView,
+          typename LambdaView,
+          typename MassInfo>
+MUDA_GENERIC void solve_lcp_constraint(IndexT        c,
+                                       VertexIdView& vertex_ids,
+                                       WeightView&   weights,
+                                       NormalView&   normals,
+                                       OffsetView&   offsets,
+                                       PositionView& y,
+                                       LambdaView&   lambdas,
+                                       MassInfo      mass_info)
 {
-    const IndexT constraint_count = constraints.host_total_constraint_count();
-    context.backward_corrections.fill(Vector3::Zero());
+    Vector4i ids = vertex_ids(c);
+    Vector4  ws  = weights(c);
+    Vector3  N   = normals(c);
+    Float    C   = -offsets(c);
+    Float    diag = 0.0;
+    Float    n2   = N.squaredNorm();
+
+    if(n2 <= 1e-24)
+        return;
+
+    for(IndexT local_i = 0; local_i < 4; ++local_i)
+    {
+        IndexT v = ids(local_i);
+        if(v < 0 || ws(local_i) == 0.0)
+            continue;
+
+        C += ws(local_i) * y(v).dot(N);
+
+        Float inv_mass = mass_info.inv_mass(v);
+        if(inv_mass > 0.0)
+            diag += ws(local_i) * ws(local_i) * inv_mass * n2;
+    }
+
+    if(diag <= 0.0)
+        return;
+
+    Float old_lambda = lambdas(c);
+    Float new_lambda = old_lambda - LCPRelaxation * C / diag;
+    new_lambda       = new_lambda > 0.0 ? new_lambda : 0.0;
+    Float delta_lambda = new_lambda - old_lambda;
+    lambdas(c)         = new_lambda;
+
+    if(delta_lambda == 0.0)
+        return;
+
+    for(IndexT local_i = 0; local_i < 4; ++local_i)
+    {
+        IndexT v = ids(local_i);
+        if(v < 0 || ws(local_i) == 0.0)
+            continue;
+
+        Float inv_mass = mass_info.inv_mass(v);
+        if(inv_mass > 0.0)
+            y(v) += (ws(local_i) * inv_mass * delta_lambda) * N;
+    }
+}
+
+template <typename MassInfo>
+void solve_lcp_range(TWPContext&        context,
+                     TWPConstraintSet& constraints,
+                     IndexT            constraint_offset,
+                     IndexT            constraint_count,
+                     MassInfo          mass_info)
+{
+    if(constraint_count == 0)
+        return;
 
     using namespace muda;
     ParallelFor()
@@ -64,71 +129,63 @@ void solve_lcp_iteration(TWPContext&        context,
                 offsets = constraints.offsets.viewer().name("offsets"),
                 y = context.y.viewer().name("y"),
                 lambdas = context.backward_lambdas.viewer().name("backward_lambdas"),
-                corrections =
-                    context.backward_corrections.viewer().name("backward_corrections"),
-                mass_info] __device__(int c) mutable
+                constraint_offset,
+                mass_info] __device__(int local_c) mutable
                {
-                   Vector4i ids = vertex_ids(c);
-                   Vector4  ws  = weights(c);
-                   Vector3  N   = normals(c);
-                   Float    C   = -offsets(c);
-                   Float    diag = 0.0;
-                   Float    n2   = N.squaredNorm();
-
-                   if(n2 <= 1e-24)
-                       return;
-
-                   for(IndexT local_i = 0; local_i < 4; ++local_i)
-                   {
-                       IndexT v = ids(local_i);
-                       if(v < 0 || ws(local_i) == 0.0)
-                           continue;
-
-                       C += ws(local_i) * y(v).dot(N);
-
-                       Float inv_mass = mass_info.inv_mass(v);
-                       if(inv_mass > 0.0)
-                           diag += ws(local_i) * ws(local_i) * inv_mass * n2;
-                   }
-
-                   if(diag <= 0.0)
-                       return;
-
-                   Float old_lambda = lambdas(c);
-                   Float new_lambda = old_lambda - LCPRelaxation * C / diag;
-                   new_lambda       = new_lambda > 0.0 ? new_lambda : 0.0;
-                   Float delta_lambda = new_lambda - old_lambda;
-                   lambdas(c)         = new_lambda;
-
-                   if(delta_lambda == 0.0)
-                       return;
-
-                   for(IndexT local_i = 0; local_i < 4; ++local_i)
-                   {
-                       IndexT v = ids(local_i);
-                       if(v < 0 || ws(local_i) == 0.0)
-                           continue;
-
-                       Float inv_mass = mass_info.inv_mass(v);
-                       if(inv_mass > 0.0)
-                       {
-                           auto& correction = corrections(v);
-                           muda::eigen::atomic_add(
-                               correction,
-                               ((ws(local_i) * inv_mass * delta_lambda) * N).eval());
-                       }
-                   }
+                   solve_lcp_constraint(constraint_offset + local_c,
+                                        vertex_ids,
+                                        weights,
+                                        normals,
+                                        offsets,
+                                        y,
+                                        lambdas,
+                                        mass_info);
                });
+}
 
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(context.y.size(),
-               [y = context.y.viewer().name("y"),
-                corrections =
-                    context.backward_corrections.viewer().name("backward_corrections")] __device__(int v) mutable
-               {
-                   y(v) += corrections(v);
-               });
+template <typename MassInfo>
+void solve_edge_constraints_colored(TWPContext&              context,
+                                    TWPConstraintSet&        constraints,
+                                    muda::CBufferView<IndexT> colored_edge_ids,
+                                    const std::vector<IndexT>& edge_color_offsets,
+                                    MassInfo                 mass_info)
+{
+    const IndexT edge_constraint_offset = constraints.host_edge_constraint_offset();
+    for(SizeT color = 0; color + 1 < edge_color_offsets.size(); ++color)
+    {
+        IndexT begin = edge_color_offsets[color];
+        IndexT end   = edge_color_offsets[color + 1];
+        IndexT count = end - begin;
+        if(count == 0)
+            continue;
+
+        using namespace muda;
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(count,
+                   [edge_ids = colored_edge_ids.viewer().name("colored_edge_ids"),
+                    vertex_ids = constraints.vertex_ids.viewer().name("vertex_ids"),
+                    weights = constraints.weights.viewer().name("weights"),
+                    normals = constraints.normals.viewer().name("normals"),
+                    offsets = constraints.offsets.viewer().name("offsets"),
+                    y = context.y.viewer().name("y"),
+                    lambdas =
+                        context.backward_lambdas.viewer().name("backward_lambdas"),
+                    edge_constraint_offset,
+                    begin,
+                    mass_info] __device__(int local_c) mutable
+                   {
+                       IndexT edge_id = edge_ids(begin + local_c);
+                       solve_lcp_constraint(edge_constraint_offset + edge_id,
+                                            vertex_ids,
+                                            weights,
+                                            normals,
+                                            offsets,
+                                            y,
+                                            lambdas,
+                                            mass_info);
+                   });
+    }
 }
 
 template <typename MassInfo>
@@ -204,6 +261,96 @@ void compute_lcp_diagnostics(TWPContext&        context,
                });
 }
 
+void TWPBackwardSolver::update_edge_coloring_if_needed(TWPConstraintSet& constraints)
+{
+    const IndexT edge_count = constraints.host_edge_constraint_count();
+    if(m_coloring_edge_count == edge_count)
+        return;
+
+    Timer timer{"TWP Build Edge LCP Colors"};
+
+    m_host_edge_vertex_ids.resize(edge_count);
+    if(edge_count > 0)
+    {
+        muda::BufferLaunch()
+            .copy<Vector4i>(m_host_edge_vertex_ids.data(),
+                            std::as_const(constraints.vertex_ids)
+                                .view(constraints.host_edge_constraint_offset(),
+                                      edge_count))
+            .wait();
+    }
+
+    std::vector<std::vector<IndexT>>       color_constraint_ids;
+    std::vector<std::unordered_set<IndexT>> color_vertices;
+
+    for(IndexT e = 0; e < edge_count; ++e)
+    {
+        Vector4i ids = m_host_edge_vertex_ids[e];
+        IndexT   selected_color = -1;
+
+        for(IndexT color = 0; color < static_cast<IndexT>(color_vertices.size());
+            ++color)
+        {
+            bool conflict = false;
+            for(IndexT local_i = 0; local_i < 4; ++local_i)
+            {
+                IndexT v = ids(local_i);
+                if(v >= 0 && color_vertices[color].contains(v))
+                {
+                    conflict = true;
+                    break;
+                }
+            }
+
+            if(!conflict)
+            {
+                selected_color = color;
+                break;
+            }
+        }
+
+        if(selected_color < 0)
+        {
+            selected_color = static_cast<IndexT>(color_vertices.size());
+            color_vertices.emplace_back();
+            color_constraint_ids.emplace_back();
+        }
+
+        color_constraint_ids[selected_color].push_back(e);
+        for(IndexT local_i = 0; local_i < 4; ++local_i)
+        {
+            IndexT v = ids(local_i);
+            if(v >= 0)
+                color_vertices[selected_color].insert(v);
+        }
+    }
+
+    m_host_edge_color_offsets.clear();
+    m_host_edge_color_offsets.reserve(color_constraint_ids.size() + 1);
+    m_host_edge_color_offsets.push_back(0);
+
+    m_host_colored_edge_ids.clear();
+    m_host_colored_edge_ids.reserve(edge_count);
+    for(const auto& ids : color_constraint_ids)
+    {
+        m_host_colored_edge_ids.insert(m_host_colored_edge_ids.end(),
+                                       ids.begin(),
+                                       ids.end());
+        m_host_edge_color_offsets.push_back(
+            static_cast<IndexT>(m_host_colored_edge_ids.size()));
+    }
+
+    m_colored_edge_ids.resize(m_host_colored_edge_ids.size());
+    if(!m_host_colored_edge_ids.empty())
+    {
+        muda::BufferLaunch()
+            .copy<IndexT>(m_colored_edge_ids.view(), m_host_colored_edge_ids.data())
+            .wait();
+    }
+
+    m_coloring_edge_count = edge_count;
+}
+
 void TWPBackwardSolver::solve(SolveInfo info)
 {
     Timer timer{"TWP Backward"};
@@ -227,6 +374,9 @@ void TWPBackwardSolver::solve(SolveInfo info)
         return;
     }
 
+    update_edge_coloring_if_needed(constraints);
+
+    const IndexT contact_count = constraints.host_contact_constraint_count();
     bool use_fem_mass = info.finite_element_method && info.finite_element_vertex_reporter;
     for(IndexT iter = 0; iter < BackwardMaxIterations; ++iter)
     {
@@ -237,13 +387,23 @@ void TWPBackwardSolver::solve(SolveInfo info)
                 info.finite_element_method->is_fixed().cviewer().name("is_fixed"),
                 info.finite_element_vertex_reporter->vertex_offset(),
                 info.finite_element_method->xs().size()};
-            solve_lcp_iteration(context, constraints, mass_info);
+            solve_edge_constraints_colored(context,
+                                           constraints,
+                                           std::as_const(m_colored_edge_ids).view(),
+                                           m_host_edge_color_offsets,
+                                           mass_info);
+            solve_lcp_range(context, constraints, 0, contact_count, mass_info);
             compute_lcp_diagnostics(context, constraints, mass_info);
         }
         else
         {
             TWPUnitMassInfo mass_info;
-            solve_lcp_iteration(context, constraints, mass_info);
+            solve_edge_constraints_colored(context,
+                                           constraints,
+                                           std::as_const(m_colored_edge_ids).view(),
+                                           m_host_edge_color_offsets,
+                                           mass_info);
+            solve_lcp_range(context, constraints, 0, contact_count, mass_info);
             compute_lcp_diagnostics(context, constraints, mass_info);
         }
 

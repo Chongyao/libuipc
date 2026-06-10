@@ -79,8 +79,6 @@ struct TWPContext
     muda::DeviceBuffer<Vector3> target_y;
     muda::DeviceBuffer<Float>   residual;
     muda::DeviceBuffer<Float>   backward_lambdas;
-    muda::DeviceBuffer<Vector3> backward_corrections;
-    muda::DeviceBuffer<IndexT>  backward_correction_counts;
     muda::DeviceBuffer<Float>   target_edge_length_squares;
     muda::DeviceBuffer<Float>   proximity_distances;
 

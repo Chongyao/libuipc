@@ -1,5 +1,7 @@
 #pragma once
 #include <type_define.h>
+#include <muda/buffer/device_buffer.h>
+#include <vector>
 
 namespace uipc::backend::cuda
 {
@@ -22,5 +24,14 @@ class TWPBackwardSolver
     };
 
     void solve(SolveInfo info);
+
+  private:
+    void update_edge_coloring_if_needed(TWPConstraintSet& constraints);
+
+    muda::DeviceBuffer<IndexT> m_colored_edge_ids;
+    std::vector<IndexT>        m_host_colored_edge_ids;
+    std::vector<IndexT>        m_host_edge_color_offsets;
+    std::vector<Vector4i>      m_host_edge_vertex_ids;
+    IndexT                     m_coloring_edge_count = -1;
 };
 }  // namespace uipc::backend::cuda
