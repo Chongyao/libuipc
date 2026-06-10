@@ -23,7 +23,7 @@ struct TWPContext
     muda::DeviceBuffer<Float>   lcp_projected_residual;
     muda::DeviceBuffer<Vector3> backward_corrections;
     muda::DeviceBuffer<IndexT>  backward_correction_counts;
-    muda::DeviceBuffer<Float>   target_edge_lengths;
+    muda::DeviceBuffer<Float>   target_edge_length_squares;
     muda::DeviceBuffer<Float>   proximity_distances;
     muda::DeviceBuffer<Float>   safe_step_alphas;
     muda::DeviceBuffer<Float>   forward_step_norms;

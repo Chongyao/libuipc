@@ -1,0 +1,22 @@
+# TWP Improvement Notes
+
+## High Priority
+
+- `proximity_search()` currently searches from `context.target_y`, but Algorithm 1 uses `Proximity_Search(x^(l), Dmax)`. The proximity set can become inconsistent with the current forward state. It should search from `context.x`; `target_y` should remain the Newton target `y^0`.
+- Done: Edge reference lengths now use the squared Eq. (13) form directly. TWP caches `||y_i^0 - y_j^0||^2` and avoids square roots in edge reference preparation and edge constraint assembly.
+- TWP currently only supports half-plane proximity. It does not use cloth self-proximity or existing simplex candidate systems, so it cannot prevent cloth self-intersection or self-compression.
+- The backward LCP solver is parallel projected Jacobi, while the paper recommends multi-color projected Gauss-Seidel. This can affect convergence and projection quality for coupled constraints.
+- Partially done: Edge constraint refresh now has separate timing. It still refreshes all surface edges every TWP iteration and should eventually use active-region filtering.
+
+## Architecture
+
+- `global_twp.cu` owns too many responsibilities: system registration, proximity search, edge constraint assembly, forward stepping, debug reductions, and state write-back.
+- `TWPConstraintSet` is a generic linear constraint container, but type-specific semantics are hidden in `weights`, `normals`, and `offsets`. This will become fragile when adding vertex-triangle and edge-edge volume constraints.
+- `TWPContext` mixes algorithm state, diagnostics, temporary debug buffers, and forward-step flags. Diagnostics should eventually be separated from core solver state.
+- Done: Function names must match behavior. For example, the edge constraint update is now named as a refresh operation instead of an append-only operation.
+
+## Verification Gaps
+
+- Debug logs do not report mesh quality, such as minimum triangle area, area ratio, or minimum edge length after TWP writes back state.
+- Logs only report final backward diagnostics for each projection call, not the full TWP outer-loop convergence history.
+- There is no small deterministic test for the squared edge constraint linearization.

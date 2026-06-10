@@ -122,27 +122,29 @@ void GlobalTWP::Impl::reset_algorithm_state()
     constraints.clear();
 }
 
-void GlobalTWP::Impl::prepare_edge_reference_lengths()
+void GlobalTWP::Impl::prepare_edge_reference_length_squares()
 {
+    Timer timer{"TWP Prepare Edge Reference Length Squares"};
+
     if(!global_simplicial_surface_manager)
         return;
 
     auto surf_edges = global_simplicial_surface_manager->surf_edges();
-    context.target_edge_lengths.resize(surf_edges.size());
+    context.target_edge_length_squares.resize(surf_edges.size());
 
     using namespace muda;
     ParallelFor()
         .file_line(__FILE__, __LINE__)
         .apply(surf_edges.size(),
-               [target_edge_lengths =
-                    context.target_edge_lengths.viewer().name("target_edge_lengths"),
+               [target_edge_length_squares = context.target_edge_length_squares.viewer().name(
+                    "target_edge_length_squares"),
                 edges = surf_edges.viewer().name("surf_edges"),
                 target_y = context.target_y.viewer().name("target_y")] __device__(
                    int e) mutable
                {
                    Vector2i E = edges(e);
-                   target_edge_lengths(e) =
-                       (target_y(E.x()) - target_y(E.y())).norm();
+                   target_edge_length_squares(e) =
+                       (target_y(E.x()) - target_y(E.y())).squaredNorm();
                });
 }
 
@@ -233,8 +235,10 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     constraints.h_count = constraints.count;
 }
 
-void GlobalTWP::Impl::append_edge_constraints()
+void GlobalTWP::Impl::refresh_edge_constraints()
 {
+    Timer timer{"TWP Refresh Edge Constraints"};
+
     if(!global_simplicial_surface_manager || constraints.h_contact_count == 0)
         return;
 
@@ -243,8 +247,8 @@ void GlobalTWP::Impl::append_edge_constraints()
     if(edge_count == 0)
         return;
 
-    UIPC_ASSERT(context.target_edge_lengths.size() == edge_count,
-                "TWP target edge lengths must be prepared before edge constraints.");
+    UIPC_ASSERT(context.target_edge_length_squares.size() == edge_count,
+                "TWP target edge length squares must be prepared before edge constraints.");
 
     IndexT edge_offset = constraints.h_contact_count;
     Float  sigma = edge_sigma_attr ? edge_sigma_attr->view()[0] : 1.1;
@@ -262,21 +266,21 @@ void GlobalTWP::Impl::append_edge_constraints()
                 offsets = constraints.offsets.viewer().name("constraint_offsets"),
                 edges = surf_edges.viewer().name("surf_edges"),
                 x = context.x.viewer().name("x"),
-                target_edge_lengths =
-                    context.target_edge_lengths.viewer().name("target_edge_lengths"),
+                target_edge_length_squares = context.target_edge_length_squares.viewer().name(
+                    "target_edge_length_squares"),
                 edge_offset,
                 sigma] __device__(int e) mutable
                {
                    IndexT I = edge_offset + e;
                    Vector2i E = edges(e);
-                   Float target_len = target_edge_lengths(e);
+                   Float target_len2 = target_edge_length_squares(e);
                    types(I) = TWPConstraintType::EdgeLengthUpperBound;
                    vertex_ids(I) = Vector4i{E.x(), E.y(), -1, -1};
-                   if(target_len > 1e-12)
+                   if(target_len2 > 1e-24)
                    {
                        Vector3 d = x(E.x()) - x(E.y());
                        Float d2 = d.squaredNorm();
-                       Float rhs = sigma * sigma * target_len * target_len + d2;
+                       Float rhs = sigma * sigma * target_len2 + d2;
                        weights(I) = Vector4{-2.0, 2.0, 0.0, 0.0};
                        normals(I) = d;
                        offsets(I) = -rhs;
@@ -512,7 +516,7 @@ void GlobalTWP::Impl::project()
     Timer timer{"TWP"};
 
     reset_algorithm_state();
-    prepare_edge_reference_lengths();
+    prepare_edge_reference_length_squares();
 
     const IndexT max_iter = max_iter_attr->view()[0];
     const Float  eps      = eps_attr->view()[0];
@@ -531,7 +535,7 @@ void GlobalTWP::Impl::project()
             context.remaining_search_bound = d_max;
         }
 
-        append_edge_constraints();
+        refresh_edge_constraints();
         backward();
         forward();
 
