@@ -222,6 +222,7 @@ def build_scene(args: argparse.Namespace):
         if args.twp_max_iter is not None
         else DEFAULT_TWP_CONVERGENCE_MAX_ITER
     )
+    config["contact"]["twp"]["eps"] = args.twp_eps
     config["contact"]["twp"]["edge_sigma"] = args.twp_edge_sigma
     config["contact"]["twp"]["backward_max_iter"] = args.twp_backward_max_iter
     config["contact"]["twp"]["self_collision_enable"] = int(not args.disable_twp_self_collision)
@@ -369,6 +370,7 @@ def parse_args():
     parser.add_argument("--twp-debug", action="store_true")
     parser.add_argument("--twp-max-iter", type=int, default=None)
     parser.add_argument("--twp-edge-sigma", type=float, default=1.1)
+    parser.add_argument("--twp-eps", type=float, default=1.0e-4)
     parser.add_argument("--twp-backward-max-iter", type=int, default=32)
     parser.add_argument("--disable-twp-self-collision", action="store_true")
     parser.add_argument("--log-file", default=None)

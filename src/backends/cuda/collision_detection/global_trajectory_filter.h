@@ -32,10 +32,12 @@ class GlobalTrajectoryFilter final : public SimSystem
     {
       public:
         Float alpha() const noexcept { return m_alpha; }
+        Float proximity_expansion() const noexcept { return m_proximity_expansion; }
 
       private:
         friend class GlobalTrajectoryFilter;
-        Float m_alpha = 0.0;
+        Float m_alpha               = 0.0;
+        Float m_proximity_expansion = 0.0;
     };
 
     class FilterActiveInfo
@@ -103,7 +105,8 @@ class GlobalTrajectoryFilter final : public SimSystem
     friend class SimEngine;
     friend class ContactExporterManager;
     friend class GlobalTWP;
-    void detect(Float alpha);  // called by SimEngine and ContactExporterManager
+    void detect(Float alpha,
+                Float proximity_expansion = 0.0);  // called by SimEngine and ContactExporterManager
     void filter_active();      // called by SimEngine and ContactExporterManager
 
     Float filter_toi(Float alpha);       // only called by SimEngine

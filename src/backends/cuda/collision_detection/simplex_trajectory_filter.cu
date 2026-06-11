@@ -19,7 +19,8 @@ void SimplexTrajectoryFilter::do_build()
 void SimplexTrajectoryFilter::do_detect(GlobalTrajectoryFilter::DetectInfo& info)
 {
     DetectInfo this_info{&m_impl};
-    this_info.m_alpha = info.alpha();
+    this_info.m_alpha               = info.alpha();
+    this_info.m_proximity_expansion = info.proximity_expansion();
     do_detect(this_info);
 }
 

@@ -61,7 +61,7 @@ void GlobalTWP::Impl::forward()
 
     constexpr Float ForwardSafety = 0.99;
 
-    context.proximity_distances.fill(Float{1e30});
+    context.proximity_distances.fill(context.remaining_search_bound);
     context.proximity_constraint_ids.fill(-1);
     context.diagnostics.forward.safe_step_alphas.fill(1.0);
 
@@ -78,13 +78,13 @@ void GlobalTWP::Impl::forward()
                     normals = constraints.normals.viewer().name("constraint_normals"),
                     offsets = constraints.offsets.viewer().name("constraint_offsets"),
                     x = context.x.viewer().name("x"),
+                    thicknesses =
+                        global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                     proximity_distances =
                         context.proximity_distances.viewer().name("proximity_distances"),
                     proximity_constraint_ids =
                         context.proximity_constraint_ids.viewer().name(
-                            "proximity_constraint_ids"),
-                    thicknesses =
-                        global_vertex_manager->thicknesses().viewer().name("thicknesses")] __device__(
+                            "proximity_constraint_ids")] __device__(
                        int i) mutable
                    {
                        TWPConstraintType type = types(i);
@@ -94,8 +94,12 @@ void GlobalTWP::Impl::forward()
                        {
                            IndexT  v = ids.x();
                            Vector3 N = normals(i);
-                           Float   plane_offset = offsets(i) - thicknesses(v);
-                           Float   distance = x(v).dot(N) - plane_offset;
+                           // The PH constraint offset stores the active boundary
+                           // P.N + thickness. Forward's D_i is the proximity
+                           // distance to the actual plane, matching the paper's
+                           // distance-to-pair step bound rather than the remaining
+                           // distance to the thickness boundary.
+                           Float distance = x(v).dot(N) - offsets(i) + thicknesses(v);
                            distance = distance > 0.0 ? distance : 0.0;
                            update_proximity_distance(proximity_distances,
                                                      proximity_constraint_ids,
@@ -164,6 +168,10 @@ void GlobalTWP::Impl::forward()
                         "forward_limited_flags"),
                 proximity_distances =
                     context.proximity_distances.viewer().name("proximity_distances"),
+                proximity_constraint_ids =
+                    context.proximity_constraint_ids.viewer().name(
+                        "proximity_constraint_ids"),
+                constraint_types = constraints.types.viewer().name("constraint_types"),
                 safe_step_alphas =
                     context.diagnostics.forward.safe_step_alphas.viewer().name(
                         "safe_step_alphas")] __device__(int i) mutable
@@ -177,8 +185,18 @@ void GlobalTWP::Impl::forward()
                    {
                        Float D_i = proximity_distances(i);
                        if(D_i < Float{1e29})
+                       {
+                           Float factor = 0.5;
+                           IndexT constraint_id = proximity_constraint_ids(i);
+                           if(constraint_id >= 0
+                              && constraint_types(constraint_id)
+                                     == TWPConstraintType::VertexHalfPlane)
+                           {
+                               factor = 1.0;
+                           }
                            alpha_i = min(Float{1.0},
-                                         Float{0.5} * ForwardSafety * D_i / norm);
+                                         factor * ForwardSafety * D_i / norm);
+                       }
                    }
 
                    safe_step_alphas(i) = alpha_i;

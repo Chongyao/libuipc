@@ -8,7 +8,7 @@ namespace uipc::backend::cuda
 enum class TWPConstraintType : IndexT
 {
     VertexHalfPlane = 0,
-    EdgeLengthUpperBound = 1,
+    EdgeLengthLowerBound = 1,
     PointTriangle = 2,
     EdgeEdge = 3,
 };
@@ -27,11 +27,12 @@ MUDA_GENERIC void write_vertex_half_plane_constraint(TypeView&       types,
                                                      GradientView&   gradients,
                                                      IndexT          constraint_id,
                                                      IndexT          vertex_id,
+                                                     IndexT          half_plane_id,
                                                      const Vector3&  normal,
                                                      Float           offset)
 {
     types(constraint_id)      = TWPConstraintType::VertexHalfPlane;
-    vertex_ids(constraint_id) = Vector4i{vertex_id, -1, -1, -1};
+    vertex_ids(constraint_id) = Vector4i{vertex_id, half_plane_id, -1, -1};
     weights(constraint_id)    = Vector4{1.0, 0.0, 0.0, 0.0};
     normals(constraint_id)    = normal;
     offsets(constraint_id)    = offset;
@@ -46,7 +47,7 @@ template <typename TypeView,
           typename NormalView,
           typename OffsetView,
           typename GradientView>
-MUDA_GENERIC void write_edge_length_upper_bound_constraint(TypeView&       types,
+MUDA_GENERIC void write_edge_length_lower_bound_constraint(TypeView&       types,
                                                            VertexIdView&   vertex_ids,
                                                            WeightView&     weights,
                                                            NormalView&     normals,
@@ -57,14 +58,14 @@ MUDA_GENERIC void write_edge_length_upper_bound_constraint(TypeView&       types
                                                            const Vector3&  direction,
                                                            Float           rhs)
 {
-    types(constraint_id)      = TWPConstraintType::EdgeLengthUpperBound;
+    types(constraint_id)      = TWPConstraintType::EdgeLengthLowerBound;
     vertex_ids(constraint_id) = Vector4i{edge.x(), edge.y(), -1, -1};
-    weights(constraint_id)    = Vector4{-2.0, 2.0, 0.0, 0.0};
+    weights(constraint_id)    = Vector4{2.0, -2.0, 0.0, 0.0};
     normals(constraint_id)    = direction;
-    offsets(constraint_id)    = -rhs;
+    offsets(constraint_id)    = rhs;
     Vector12 G                = Vector12::Zero();
-    G.segment<3>(0)           = -2.0 * direction;
-    G.segment<3>(3)           = 2.0 * direction;
+    G.segment<3>(0)           = 2.0 * direction;
+    G.segment<3>(3)           = -2.0 * direction;
     gradients(constraint_id)  = G;
 }
 
@@ -74,7 +75,7 @@ template <typename TypeView,
           typename NormalView,
           typename OffsetView,
           typename GradientView>
-MUDA_GENERIC void write_disabled_edge_length_upper_bound_constraint(
+MUDA_GENERIC void write_disabled_edge_length_lower_bound_constraint(
     TypeView&     types,
     VertexIdView& vertex_ids,
     WeightView&   weights,
@@ -83,7 +84,7 @@ MUDA_GENERIC void write_disabled_edge_length_upper_bound_constraint(
     GradientView& gradients,
     IndexT        constraint_id)
 {
-    types(constraint_id)      = TWPConstraintType::EdgeLengthUpperBound;
+    types(constraint_id)      = TWPConstraintType::EdgeLengthLowerBound;
     vertex_ids(constraint_id) = Vector4i{-1, -1, -1, -1};
     weights(constraint_id)    = Vector4::Zero();
     normals(constraint_id)    = Vector3::Zero();

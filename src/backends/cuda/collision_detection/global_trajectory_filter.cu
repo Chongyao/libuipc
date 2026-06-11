@@ -50,12 +50,13 @@ void GlobalTrajectoryFilter::Impl::init()
     h_tois.resize(filter_view.size());
 }
 
-void GlobalTrajectoryFilter::detect(Float alpha)
+void GlobalTrajectoryFilter::detect(Float alpha, Float proximity_expansion)
 {
     for(auto filter : m_impl.filters.view())
     {
         DetectInfo info;
-        info.m_alpha = alpha;
+        info.m_alpha               = alpha;
+        info.m_proximity_expansion = proximity_expansion;
         filter->detect(info);
     }
 }

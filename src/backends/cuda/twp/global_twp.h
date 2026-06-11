@@ -14,6 +14,7 @@ namespace uipc::backend::cuda
 class GlobalVertexManager;
 class GlobalSimplicialSurfaceManager;
 class GlobalTrajectoryFilter;
+class VertexHalfPlaneTrajectoryFilter;
 class SimplexTrajectoryFilter;
 class GlobalContactManager;
 class HalfPlane;
@@ -38,11 +39,12 @@ class GlobalTWP final : public SimSystem
         void reset_algorithm_state();
         void prepare_edge_reference_length_squares();
         void proximity_search(Float search_bound);
-        void refresh_self_collision_candidates();
-        void append_simplex_contact_constraints();
+        void refresh_self_collision_candidates(Float search_bound);
+        void append_simplex_contact_constraints(Float search_bound);
         void refresh_edge_constraints();
         void backward();
         void forward();
+        void sync_half_plane_support_set();
         Float  compute_min_clearance(muda::CBufferView<Vector3> positions,
                                       IndexT global_vertex_offset = 0);
         IndexT count_penetrated_vertices(muda::CBufferView<Vector3> positions,
@@ -52,6 +54,7 @@ class GlobalTWP final : public SimSystem
         SimSystemSlot<GlobalVertexManager>    global_vertex_manager;
         SimSystemSlot<GlobalSimplicialSurfaceManager> global_simplicial_surface_manager;
         SimSystemSlot<GlobalTrajectoryFilter> global_trajectory_filter;
+        SimSystemSlot<VertexHalfPlaneTrajectoryFilter> vertex_half_plane_trajectory_filter;
         SimSystemSlot<SimplexTrajectoryFilter> simplex_trajectory_filter;
         SimSystemSlot<GlobalContactManager>   global_contact_manager;
         SimSystemSlot<FiniteElementMethod>    finite_element_method;
@@ -71,6 +74,8 @@ class GlobalTWP final : public SimSystem
         TWPContext        context;
         TWPConstraintSet  constraints;
         TWPBackwardSolver backward_solver;
+        muda::DeviceBuffer<Vector2i> support_PHs;
+        muda::DeviceVar<IndexT>      support_PH_count;
     };
 
   private:

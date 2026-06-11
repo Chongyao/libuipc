@@ -86,7 +86,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
     auto v2bs    = info.v2b();
     auto body_self_collisions = info.body_self_collision();
     auto contact_element_ids  = info.contact_element_ids();
-    auto cmts = info.contact_mask_tabular();
+    auto cmts                 = info.contact_mask_tabular();
+    Float proximity_expansion = info.proximity_expansion();
 
     point_aabbs.resize(Vs.size());
     triangle_aabbs.resize(Fs.size());
@@ -118,7 +119,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                     cids = codim_point_cids.viewer().name("cids"),
                     thicknesses = info.thicknesses().viewer().name("thicknesses"),
                     d_hats = info.d_hats().viewer().name("d_hats"),
-                    alpha  = alpha] __device__(int i) mutable
+                    alpha = alpha,
+                    proximity_expansion] __device__(int i) mutable
                    {
                        auto vI = codimVs(i);
 
@@ -131,7 +133,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                        AABB aabb;
                        aabb.extend(pos.cast<float>()).extend(pos_t.cast<float>());
 
-                       float expand = d_hat_expansion + thickness;
+                       float expand = d_hat_expansion + thickness + proximity_expansion;
 
                        aabb.min().array() -= expand;
                        aabb.max().array() += expand;
@@ -155,7 +157,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                 cids        = point_cids.viewer().name("cids"),
                 thicknesses = info.thicknesses().viewer().name("thicknesses"),
                 d_hats      = info.d_hats().viewer().name("d_hats"),
-                alpha       = alpha] __device__(int i) mutable
+                alpha = alpha,
+                proximity_expansion] __device__(int i) mutable
                {
                    auto vI = Vs(i);
 
@@ -168,7 +171,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                    AABB aabb;
                    aabb.extend(pos.cast<float>()).extend(pos_t.cast<float>());
 
-                   float expand = d_hat_expansion + thickness;
+                   float expand = d_hat_expansion + thickness + proximity_expansion;
 
                    aabb.min().array() -= expand;
                    aabb.max().array() += expand;
@@ -191,7 +194,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                 dxs         = dxs.viewer().name("dx"),
                 thicknesses = info.thicknesses().viewer().name("thicknesses"),
                 d_hats      = info.d_hats().viewer().name("d_hats"),
-                alpha       = alpha] __device__(int i) mutable
+                alpha = alpha,
+                proximity_expansion] __device__(int i) mutable
                {
                    auto eI = Es(i);
 
@@ -212,7 +216,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                        .extend(pos0_t.cast<float>())
                        .extend(pos1_t.cast<float>());
 
-                   float expand = d_hat_expansion + thickness;
+                   float expand = d_hat_expansion + thickness + proximity_expansion;
 
                    aabb.min().array() -= expand;
                    aabb.max().array() += expand;
@@ -235,7 +239,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                 dxs         = dxs.viewer().name("dx"),
                 thicknesses = info.thicknesses().viewer().name("thicknesses"),
                 d_hats      = info.d_hats().viewer().name("d_hats"),
-                alpha       = alpha] __device__(int i) mutable
+                alpha = alpha,
+                proximity_expansion] __device__(int i) mutable
                {
                    auto fI = Fs(i);
 
@@ -261,7 +266,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                        .extend(pos1_t.cast<float>())
                        .extend(pos2_t.cast<float>());
 
-                   float expand = d_hat_expansion + thickness;
+                   float expand = d_hat_expansion + thickness + proximity_expansion;
 
                    aabb.min().array() -= expand;
                    aabb.max().array() += expand;
@@ -311,7 +316,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                  subscene_mask_tabular = info.subscene_mask_tabular().viewer().name("subscene_mask_tabular"),
                  body_self_collision = info.body_self_collision().viewer().name("body_self_collision"),
                  d_hats = info.d_hats().viewer().name("d_hats"),
-                 alpha  = alpha] __device__(InfoStacklessBVH::LeafPredInfo info)
+                 alpha = alpha,
+                 proximity_expansion] __device__(InfoStacklessBVH::LeafPredInfo info)
                 {
                     auto i = info.i;
                     auto j = info.j;
@@ -344,7 +350,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                     Float thickness = PP_thickness(thicknesses(V), thicknesses(codimV));
                     Float d_hat = PP_d_hat(d_hats(V), d_hats(codimV));
 
-                    Float expand = d_hat + thickness;
+                    Float expand = d_hat + thickness + proximity_expansion;
 
                     if(!distance::point_point_ccd_broadphase(P0, P1, dP0, dP1, expand))
                         return false;
@@ -386,7 +392,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                  subscene_mask_tabular = info.subscene_mask_tabular().viewer().name("subscene_mask_tabular"),
                  body_self_collision = info.body_self_collision().viewer().name("body_self_collision"),
                  d_hats = info.d_hats().viewer().name("d_hats"),
-                 alpha  = alpha] __device__(InfoStacklessBVH::LeafPredInfo info)
+                 alpha = alpha,
+                 proximity_expansion] __device__(InfoStacklessBVH::LeafPredInfo info)
                 {
                     auto i = info.i;
                     auto j = info.j;
@@ -426,7 +433,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                                                    thicknesses(E[1]));
                     Float d_hat = PE_d_hat(d_hats(codimV), d_hats(E[0]), d_hats(E[1]));
 
-                    Float expand = d_hat + thickness;
+                    Float expand = d_hat + thickness + proximity_expansion;
 
                     if(!distance::point_edge_ccd_broadphase(P, E0, E1, dP, dE0, dE1, expand))
                         return false;
@@ -466,7 +473,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
              subscene_mask_tabular = info.subscene_mask_tabular().viewer().name("subscene_mask_tabular"),
              body_self_collision = info.body_self_collision().viewer().name("body_self_collision"),
              d_hats = info.d_hats().viewer().name("d_hats"),
-             alpha  = alpha] __device__(InfoStacklessBVH::LeafPredInfo info)
+             alpha = alpha,
+             proximity_expansion] __device__(InfoStacklessBVH::LeafPredInfo info)
             {
                 auto i = info.i;
                 auto j = info.j;
@@ -513,7 +521,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                 Float d_hat =
                     EE_d_hat(d_hats(E0[0]), d_hats(E0[1]), d_hats(E1[0]), d_hats(E1[1]));
 
-                Float expand = d_hat + thickness;
+                Float expand = d_hat + thickness + proximity_expansion;
 
                 if(!distance::edge_edge_ccd_broadphase(
                        E0_0, E0_1, E1_0, E1_1, dE0_0, dE0_1, dE1_0, dE1_1, expand))
@@ -557,7 +565,8 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
              subscene_mask_tabular = info.subscene_mask_tabular().viewer().name("subscene_mask_tabular"),
              body_self_collision = info.body_self_collision().viewer().name("body_self_collision"),
              d_hats = info.d_hats().viewer().name("d_hats"),
-             alpha  = alpha] __device__(InfoStacklessBVH::LeafPredInfo info)
+             alpha = alpha,
+             proximity_expansion] __device__(InfoStacklessBVH::LeafPredInfo info)
             {
                 auto i = info.i;
                 auto j = info.j;
@@ -605,7 +614,7 @@ void InfoStacklessBVHSimplexTrajectoryFilter::Impl::detect(DetectInfo& info)
                 Float d_hat =
                     PT_d_hat(d_hats(V), d_hats(F[0]), d_hats(F[1]), d_hats(F[2]));
 
-                Float expand = d_hat + thickness;
+                Float expand = d_hat + thickness + proximity_expansion;
 
                 if(!distance::point_triangle_ccd_broadphase(P, F0, F1, F2, dP, dF0, dF1, dF2, expand))
                     return false;

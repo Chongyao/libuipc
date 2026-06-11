@@ -51,6 +51,19 @@ void GlobalTWP::Impl::refresh_edge_constraints()
     Float  sigma = edge_sigma_attr ? edge_sigma_attr->view()[0] : 1.1;
     UIPC_ASSERT(sigma > 0.0, "contact/twp/edge_sigma must be positive.");
 
+    // Paper constraint:
+    //   c_i(x_i, x_j) = sigma - ||x_i - x_j|| / ||y_i^{k+1} - y_j^{k+1}|| >= 0.
+    // In the backward step, x is a constant, while y is the optimization variable.
+    // For this edge constraint we use l = ||y_i^0 - y_j^0|| as the constant
+    // reference length, giving the squared lower-bound form:
+    //   F(y) = sigma^2 ||y_i - y_j||^2 - l^2 >= 0.
+    //
+    // The LCP stores a linearized constraint C(y) >= 0. At the current backward
+    // iterate y^k, let d_k = y_i^k - y_j^k. Linearizing F gives:
+    //   F(y) ~= 2 sigma^2 d_k dot (y_i - y_j)
+    //           - (sigma^2 ||d_k||^2 + l^2) >= 0.
+    // Therefore the gradient is built from the current y, and l^2 remains the
+    // fixed target/reference length. The mutable forward state x is not used here.
     using namespace muda;
     ParallelFor()
         .file_line(__FILE__, __LINE__)
@@ -64,9 +77,10 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                 gradients =
                     constraints.gradients.viewer().name("constraint_gradients"),
                 edges = surf_edges.viewer().name("surf_edges"),
-                x = context.x.viewer().name("x"),
-                target_edge_length_squares = context.target_edge_length_squares.viewer().name(
-                    "target_edge_length_squares"),
+                y = context.y.viewer().name("y"),
+                target_edge_length_squares =
+                    context.target_edge_length_squares.viewer().name(
+                        "target_edge_length_squares"),
                 edge_offset,
                 sigma] __device__(int e) mutable
                {
@@ -75,10 +89,12 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                    Float target_len2 = target_edge_length_squares(e);
                    if(target_len2 > 1e-24)
                    {
-                       Vector3 d = x(E.x()) - x(E.y());
-                       Float d2 = d.squaredNorm();
-                       Float rhs = sigma * sigma * target_len2 + d2;
-                       write_edge_length_upper_bound_constraint(types,
+                       Float sigma2 = sigma * sigma;
+                       Vector3 y_d = y(E.x()) - y(E.y());
+                       Float y_len2 = y_d.squaredNorm();
+                       Vector3 gradient_d = sigma2 * y_d;
+                       Float rhs = sigma2 * y_len2 + target_len2;
+                       write_edge_length_lower_bound_constraint(types,
                                                                 vertex_ids,
                                                                 weights,
                                                                 normals,
@@ -86,12 +102,12 @@ void GlobalTWP::Impl::refresh_edge_constraints()
                                                                 gradients,
                                                                 I,
                                                                 E,
-                                                                d,
+                                                                gradient_d,
                                                                 rhs);
                    }
                    else
                    {
-                       write_disabled_edge_length_upper_bound_constraint(types,
+                       write_disabled_edge_length_lower_bound_constraint(types,
                                                                          vertex_ids,
                                                                          weights,
                                                                          normals,

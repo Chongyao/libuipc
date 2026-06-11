@@ -16,6 +16,19 @@ class IPCVertexHalfPlaneNormalContact final : public VertexHalfPlaneNormalContac
     {
         require<IPCPipelineFlag>();
         half_plane = &require<HalfPlane>();
+
+        auto constitution_attr =
+            world().scene().config().find<std::string>("contact/constitution");
+        auto barrier_attr =
+            world().scene().config().find<std::string>("contact/half_plane_barrier");
+
+        bool use_quadratic =
+            (constitution_attr && constitution_attr->view()[0] == "twp")
+            || (barrier_attr && barrier_attr->view()[0] == "quadratic");
+        if(use_quadratic)
+            barrier_model = HalfPlaneBarrierModel::Quadratic;
+        else
+            barrier_model = HalfPlaneBarrierModel::IPC;
     }
 
     virtual void do_compute_energy(EnergyInfo& info)
@@ -37,7 +50,8 @@ class IPCVertexHalfPlaneNormalContact final : public VertexHalfPlaneNormalContac
                     eps_v                    = info.eps_velocity(),
                     half_plane_vertex_offset = info.half_plane_vertex_offset(),
                     d_hats = info.d_hats().viewer().name("d_hats"),
-                    dt     = info.dt()] __device__(int I) mutable
+                    dt     = info.dt(),
+                    barrier_model = barrier_model] __device__(int I) mutable
                    {
                        Vector2i PH = PHs(I);
 
@@ -57,7 +71,7 @@ class IPCVertexHalfPlaneNormalContact final : public VertexHalfPlaneNormalContac
                        Float thickness = thicknesses(vI);
 
                        Es(I) = sym::ipc_vertex_half_contact::PH_barrier_energy(
-                           kt2, d_hat, thickness, v, P, N);
+                           barrier_model, kt2, d_hat, thickness, v, P, N);
                    });
     }
 
@@ -83,7 +97,8 @@ class IPCVertexHalfPlaneNormalContact final : public VertexHalfPlaneNormalContac
                         eps_v  = info.eps_velocity(),
                         d_hats = info.d_hats().viewer().name("d_hats"),
                         half_plane_vertex_offset = info.half_plane_vertex_offset(),
-                        dt = info.dt()] __device__(int I) mutable
+                        dt = info.dt(),
+                        barrier_model = barrier_model] __device__(int I) mutable
                        {
                            Vector2i PH = PHs(I);
 
@@ -106,14 +121,14 @@ class IPCVertexHalfPlaneNormalContact final : public VertexHalfPlaneNormalContac
                            if(gradient_only)
                            {
                                sym::ipc_vertex_half_contact::PH_barrier_gradient(
-                                   G, kt2, d_hat, thickness, v, P, N);
+                                   barrier_model, G, kt2, d_hat, thickness, v, P, N);
                                Grad(I).write(vI, G);
                            }
                            else
                            {
                                Matrix3x3 H;
                                sym::ipc_vertex_half_contact::PH_barrier_gradient_hessian(
-                                   G, H, kt2, d_hat, thickness, v, P, N);
+                                   barrier_model, G, H, kt2, d_hat, thickness, v, P, N);
                                Grad(I).write(vI, G);
                                Hess(I).write(vI, vI, H);
                            }
@@ -122,6 +137,7 @@ class IPCVertexHalfPlaneNormalContact final : public VertexHalfPlaneNormalContac
     }
 
     HalfPlane* half_plane = nullptr;
+    HalfPlaneBarrierModel barrier_model = HalfPlaneBarrierModel::IPC;
 };
 
 REGISTER_SIM_SYSTEM(IPCVertexHalfPlaneNormalContact);

@@ -29,7 +29,7 @@ void SimEngine::advance_twp()
         {
             Timer timer{"Compute DyTopo Effect"};
             GlobalDyTopoEffectManager::ComputeDyTopoEffectInfo info;
-            info.component_flags(EnergyComponentFlags::Complement);
+            info.component_flags(EnergyComponentFlags::All);
             m_global_dytopo_effect_manager->compute_dytopo_effect(info);
         }
     };

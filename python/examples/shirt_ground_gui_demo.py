@@ -35,7 +35,7 @@ except ImportError as exc:
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_SHIRT = REPO_ROOT / "output" / "unisex_shirt.obj"
 DEFAULT_WORKSPACE = REPO_ROOT / "output" / "python" / "shirt_ground_gui_demo"
-INITIAL_Y_OFFSET = 1.0
+INITIAL_GROUND_CLEARANCE = 1.0
 DEFAULT_TWP_CONVERGENCE_MAX_ITER = 100000
 _LOG_FILE_HANDLE = None
 
@@ -44,8 +44,9 @@ def rotate_mesh_x_90_and_lift(mesh):
     vertices = mesh.positions().view().reshape(-1, 3)
     y = vertices[:, 1].copy()
     z = vertices[:, 2].copy()
-    vertices[:, 1] = -z + INITIAL_Y_OFFSET
+    vertices[:, 1] = -z
     vertices[:, 2] = y
+    vertices[:, 1] += INITIAL_GROUND_CLEARANCE - vertices[:, 1].min()
 
 
 def redirect_native_logs(args: argparse.Namespace):
@@ -90,6 +91,7 @@ def build_scene(args: argparse.Namespace):
         else DEFAULT_TWP_CONVERGENCE_MAX_ITER
     )
     config["contact"]["twp"]["max_iter"] = twp_max_iter
+    config["contact"]["twp"]["eps"] = args.twp_eps
     config["contact"]["twp"]["debug"] = int(args.twp_debug)
     config["contact"]["twp"]["edge_sigma"] = args.twp_edge_sigma
     config["contact"]["twp"]["backward_max_iter"] = args.twp_backward_max_iter
@@ -113,12 +115,7 @@ def build_scene(args: argparse.Namespace):
             "Convert the USD first, or pass --shirt /path/to/unisex_shirt.obj."
         )
 
-    pre_transform = Matrix4x4.Identity()
-    pre_transform[0, 0] = args.scale
-    pre_transform[1, 1] = args.scale
-    pre_transform[2, 2] = args.scale
-
-    io = SimplicialComplexIO(pre_transform)
+    io = SimplicialComplexIO(Matrix4x4.Identity())
     shirt_mesh = io.read(str(shirt_path))
     rotate_mesh_x_90_and_lift(shirt_mesh)
     label_surface(shirt_mesh)
@@ -220,7 +217,6 @@ def parse_args():
     parser.add_argument("--contact", choices=("ipc", "al-ipc", "twp"), default="ipc")
     parser.add_argument("--run", action="store_true", help="start simulation immediately")
     parser.add_argument("--max-frames", type=int, default=0, help="0 means no limit")
-    parser.add_argument("--scale", type=float, default=0.01)
     parser.add_argument("--part-size", type=int, default=16)
     parser.add_argument("--young", type=float, default=1.0e6)
     parser.add_argument("--poisson", type=float, default=0.49)
@@ -236,6 +232,7 @@ def parse_args():
         help="limit TWP outer iterations; omitted means run until convergence with a large safety cap",
     )
     parser.add_argument("--twp-edge-sigma", type=float, default=1.1)
+    parser.add_argument("--twp-eps", type=float, default=1.0e-4)
     parser.add_argument("--twp-backward-max-iter", type=int, default=32)
     parser.add_argument("--disable-twp-self-collision", action="store_true")
     parser.add_argument("--log-file", default=None)

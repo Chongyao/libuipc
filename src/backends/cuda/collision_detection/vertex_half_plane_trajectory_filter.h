@@ -122,6 +122,7 @@ class VertexHalfPlaneTrajectoryFilter : public TrajectoryFilter
 
     muda::CBufferView<Vector2i> PHs() noexcept;
     muda::CBufferView<Vector2i> friction_PHs() noexcept;
+    void replace_PHs(muda::CBufferView<Vector2i> PHs);
     virtual muda::CBufferView<Vector2i> candidate_PHs() const noexcept = 0;
     virtual muda::CBufferView<Float>    toi_PHs() const noexcept       = 0;
 

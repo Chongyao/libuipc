@@ -11,7 +11,7 @@
 
 namespace uipc::backend::cuda
 {
-void GlobalTWP::Impl::refresh_self_collision_candidates()
+void GlobalTWP::Impl::refresh_self_collision_candidates(Float search_bound)
 {
     if(!global_trajectory_filter || !simplex_trajectory_filter)
         return;
@@ -19,7 +19,7 @@ void GlobalTWP::Impl::refresh_self_collision_candidates()
     Timer timer{"TWP Refresh Self Collision Candidates"};
 
     global_vertex_manager->setup_ccd(context.x.view());
-    global_trajectory_filter->detect(1.0);
+    global_trajectory_filter->detect(0.0, search_bound);
     global_vertex_manager->restore_ccd();
 }
 
@@ -32,7 +32,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     bool self_collision_enabled =
         !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
     if(self_collision_enabled)
-        refresh_self_collision_candidates();
+        refresh_self_collision_candidates(search_bound);
 
     SizeT vertex_count = context.x.size();
     SizeT plane_count  = half_plane ? half_plane->positions().size() : 0;
@@ -66,7 +66,6 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                     gradients =
                         constraints.gradients.viewer().name("constraint_gradients"),
                     x = context.x.viewer().name("x"),
-                    target_y = context.target_y.viewer().name("target_y"),
                     thicknesses =
                         global_vertex_manager->thicknesses().viewer().name("thicknesses"),
                     contact_ids =
@@ -104,11 +103,9 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                            const Vector3& N = plane_normals(h);
 
                            Float signed_dist = (x(v) - P).dot(N);
-                           Float target_signed_dist = (target_y(v) - P).dot(N);
                            Float min_dist    = thicknesses(v);
 
-                           if(signed_dist < min_dist + search_bound
-                              || target_signed_dist < min_dist + search_bound)
+                           if(signed_dist < min_dist + search_bound)
                            {
                                IndexT I = atomic_add(count.data(), 1);
                                write_vertex_half_plane_constraint(types,
@@ -119,6 +116,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                                                                   gradients,
                                                                   I,
                                                                   v,
+                                                                  h,
                                                                   N,
                                                                   P.dot(N) + min_dist);
                            }
@@ -127,7 +125,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
     }
 
     if(self_collision_enabled)
-        append_simplex_contact_constraints();
+        append_simplex_contact_constraints(search_bound);
     constraints.set_host_contact_constraint_count(constraints.count);
 }
 }  // namespace uipc::backend::cuda

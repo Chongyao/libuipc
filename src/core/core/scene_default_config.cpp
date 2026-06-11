@@ -51,6 +51,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     //  - al-ipc
     //  - twp
     config.create("contact/constitution", std::string{"ipc"});
+    config.create("contact/half_plane_barrier", std::string{"ipc"});
 
     // al-ipc tuning knobs. They are ignored when contact/constitution != "al-ipc".
     config.create("contact/al-ipc/mu_scale_fem", Float{5e7});

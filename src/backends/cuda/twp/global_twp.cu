@@ -10,7 +10,11 @@
 #include <finite_element/finite_element_vertex_reporter.h>
 #include <implicit_geometry/half_plane.h>
 #include <implicit_geometry/half_plane_vertex_reporter.h>
+#include <collision_detection/vertex_half_plane_trajectory_filter.h>
 #include <uipc/common/timer.h>
+#include <muda/atomic.h>
+#include <muda/launch/parallel_for.h>
+#include <cmath>
 #include <sstream>
 #include <string_view>
 
@@ -34,6 +38,21 @@ class SimSystemCreator<cuda::GlobalTWP>
 namespace uipc::backend::cuda
 {
 REGISTER_SIM_SYSTEM(GlobalTWP);
+
+namespace
+{
+bool is_finite(const TWPBackwardDiagnostics& backward,
+               const TWPForwardDiagnostics&  forward)
+{
+    return std::isfinite(backward.violation_inf)
+           && std::isfinite(backward.lcp_min_gap)
+           && std::isfinite(backward.lcp_complementarity_inf)
+           && std::isfinite(backward.lcp_projected_residual_inf)
+           && std::isfinite(forward.residual_inf)
+           && std::isfinite(forward.max_step)
+           && std::isfinite(forward.min_alpha);
+}
+}  // namespace
 
 void GlobalTWP::do_build()
 {
@@ -63,8 +82,12 @@ void GlobalTWP::do_build()
         [this]
         {
             if(m_impl.global_trajectory_filter)
+            {
                 m_impl.simplex_trajectory_filter =
                     m_impl.global_trajectory_filter->find<SimplexTrajectoryFilter>();
+                m_impl.vertex_half_plane_trajectory_filter =
+                    m_impl.global_trajectory_filter->find<VertexHalfPlaneTrajectoryFilter>();
+            }
         });
     on_write_scene([this] { debug_log_state("retrieve"); });
 }
@@ -138,6 +161,47 @@ void GlobalTWP::Impl::backward()
     backward_solver.solve(info);
 }
 
+void GlobalTWP::Impl::sync_half_plane_support_set()
+{
+    if(!vertex_half_plane_trajectory_filter)
+        return;
+
+    const IndexT contact_count = constraints.host_contact_constraint_count();
+    support_PHs.resize(contact_count);
+    support_PH_count = 0;
+
+    if(contact_count > 0)
+    {
+        using namespace muda;
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(contact_count,
+                   [types = constraints.types.viewer().name("constraint_types"),
+                    vertex_ids =
+                        constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                    support_PHs = support_PHs.viewer().name("support_PHs"),
+                    support_PH_count =
+                        support_PH_count.viewer().name("support_PH_count")] __device__(
+                       int c) mutable
+                   {
+                       if(types(c) != TWPConstraintType::VertexHalfPlane)
+                           return;
+
+                       Vector4i ids = vertex_ids(c);
+                       if(ids.x() < 0 || ids.y() < 0)
+                           return;
+
+                       IndexT dst = atomic_add(support_PH_count.data(), 1);
+                       support_PHs(dst) = Vector2i{ids.x(), ids.y()};
+                   });
+    }
+
+    IndexT host_count = 0;
+    support_PH_count.view().copy_to(&host_count);
+    support_PHs.resize(host_count);
+    vertex_half_plane_trajectory_filter->replace_PHs(support_PHs.view());
+}
+
 void GlobalTWP::Impl::project()
 {
     Timer timer{"TWP"};
@@ -162,6 +226,7 @@ void GlobalTWP::Impl::project()
     const Float  d_max    = d_max_attr->view()[0];
 
     bool   converged = false;
+    bool   nonfinite = false;
     IndexT step_count = 0;
     IndexT abnormal_debug_count = 0;
     for(IndexT l = 0; l <= max_iter; ++l)
@@ -177,6 +242,18 @@ void GlobalTWP::Impl::project()
         refresh_edge_constraints();
         backward();
         forward();
+
+        if(!is_finite(context.diagnostics.backward, context.diagnostics.forward))
+        {
+            nonfinite = true;
+            if(debug_enabled())
+            {
+                std::ostringstream ss;
+                ss << "nonfinite-" << l;
+                debug_log_state(ss.str());
+            }
+            break;
+        }
 
         if(debug_enabled())
         {
@@ -219,6 +296,12 @@ void GlobalTWP::Impl::project()
             context.diagnostics.forward.min_alpha,
             context.diagnostics.forward.limited_vertices);
     }
+
+    UIPC_ASSERT(!nonfinite,
+                "TWP produced non-finite diagnostics before convergence. "
+                "Refusing to write invalid projected positions back to the global state.");
+
+    sync_half_plane_support_set();
 
     global_vertex_manager->overwrite_positions(context.x.view());
     if(finite_element_method)

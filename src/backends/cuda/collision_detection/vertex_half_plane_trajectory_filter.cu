@@ -84,6 +84,13 @@ muda::CBufferView<Vector2i> VertexHalfPlaneTrajectoryFilter::PHs() noexcept
     return m_impl.PHs;
 }
 
+void VertexHalfPlaneTrajectoryFilter::replace_PHs(muda::CBufferView<Vector2i> PHs)
+{
+    m_impl.loose_resize(m_impl.recovered_PHs, PHs.size());
+    m_impl.recovered_PHs.view().copy_from(PHs);
+    m_impl.PHs = m_impl.recovered_PHs;
+}
+
 muda::CBufferView<Vector2i> VertexHalfPlaneTrajectoryFilter::friction_PHs() noexcept
 {
     return m_impl.friction_PHs;

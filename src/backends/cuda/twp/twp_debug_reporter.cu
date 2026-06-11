@@ -23,7 +23,7 @@ const char* constraint_type_name(TWPConstraintType type)
     {
         case TWPConstraintType::VertexHalfPlane:
             return "PH";
-        case TWPConstraintType::EdgeLengthUpperBound:
+        case TWPConstraintType::EdgeLengthLowerBound:
             return "EDGE";
         case TWPConstraintType::PointTriangle:
             return "PT";
@@ -479,7 +479,7 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
             host_summary.type_counts[static_cast<IndexT>(
                 TWPConstraintType::EdgeEdge)],
             host_summary.type_counts[static_cast<IndexT>(
-                TWPConstraintType::EdgeLengthUpperBound)],
+                TWPConstraintType::EdgeLengthLowerBound)],
             target_min_clearance,
             target_penetration_count,
             context_x_min_clearance,

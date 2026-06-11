@@ -72,12 +72,14 @@ class SimplexTrajectoryFilter : public TrajectoryFilter
         using BaseInfo::BaseInfo;
 
         Float alpha() const noexcept { return m_alpha; }
+        Float proximity_expansion() const noexcept { return m_proximity_expansion; }
 
         muda::CBufferView<Vector3> displacements() const noexcept;
 
       private:
         friend class SimplexTrajectoryFilter;
-        Float m_alpha = 0.0;
+        Float m_alpha               = 0.0;
+        Float m_proximity_expansion = 0.0;
     };
 
     class FilterActiveInfo : public BaseInfo

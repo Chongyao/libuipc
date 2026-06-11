@@ -5,9 +5,69 @@
 
 namespace uipc::backend::cuda
 {
+enum class HalfPlaneBarrierModel : IndexT
+{
+    IPC = 0,
+    Quadratic = 1,
+};
+
 namespace sym::ipc_vertex_half_contact
 {
 #include "sym/vertex_half_plane_distance.inl"
+
+    inline __device__ Float signed_half_plane_distance(const Vector3& v,
+                                                       const Vector3& P,
+                                                       const Vector3& N)
+    {
+        return (v - P).dot(N);
+    }
+
+    inline __device__ Float PH_quadratic_barrier_energy(Float          kappa,
+                                                        Float          thickness,
+                                                        const Vector3& v,
+                                                        const Vector3& P,
+                                                        const Vector3& N)
+    {
+        Float gap = signed_half_plane_distance(v, P, N) - thickness;
+        if(gap >= 0.0)
+            return 0.0;
+
+        return 0.5 * kappa * gap * gap;
+    }
+
+    inline __device__ void PH_quadratic_barrier_gradient_hessian(Vector3&       G,
+                                                                 Matrix3x3&     H,
+                                                                 Float          kappa,
+                                                                 Float          thickness,
+                                                                 const Vector3& v,
+                                                                 const Vector3& P,
+                                                                 const Vector3& N)
+    {
+        Float gap = signed_half_plane_distance(v, P, N) - thickness;
+        if(gap >= 0.0)
+        {
+            G = Vector3::Zero();
+            H = Matrix3x3::Zero();
+            return;
+        }
+
+        G = kappa * gap * N;
+        H = kappa * N * N.transpose();
+    }
+
+    inline __device__ void PH_quadratic_barrier_gradient(Vector3&       G,
+                                                         Float          kappa,
+                                                         Float          thickness,
+                                                         const Vector3& v,
+                                                         const Vector3& P,
+                                                         const Vector3& N)
+    {
+        Float gap = signed_half_plane_distance(v, P, N) - thickness;
+        if(gap < 0.0)
+            G = kappa * gap * N;
+        else
+            G = Vector3::Zero();
+    }
 
     inline __device__ Float PH_barrier_energy(Float          kappa,
                                               Float          d_hat,
@@ -24,6 +84,20 @@ namespace sym::ipc_vertex_half_contact
         KappaBarrier(E, kappa, D, d_hat, thickness);
 
         return E;
+    }
+
+    inline __device__ Float PH_barrier_energy(HalfPlaneBarrierModel model,
+                                              Float                 kappa,
+                                              Float                 d_hat,
+                                              Float                 thickness,
+                                              const Vector3&        v,
+                                              const Vector3&        P,
+                                              const Vector3&        N)
+    {
+        if(model == HalfPlaneBarrierModel::Quadratic)
+            return PH_quadratic_barrier_energy(kappa, thickness, v, P, N);
+
+        return PH_barrier_energy(kappa, d_hat, thickness, v, P, N);
     }
 
     inline __device__ void PH_barrier_gradient_hessian(Vector3&       G,
@@ -57,6 +131,25 @@ namespace sym::ipc_vertex_half_contact
         H = ddBddD * dDdx * dDdx.transpose() + dBdD * ddDddx;
     }
 
+    inline __device__ void PH_barrier_gradient_hessian(HalfPlaneBarrierModel model,
+                                                       Vector3&              G,
+                                                       Matrix3x3&            H,
+                                                       Float                 kappa,
+                                                       Float                 d_hat,
+                                                       Float                 thickness,
+                                                       const Vector3&        v,
+                                                       const Vector3&        P,
+                                                       const Vector3&        N)
+    {
+        if(model == HalfPlaneBarrierModel::Quadratic)
+        {
+            PH_quadratic_barrier_gradient_hessian(G, H, kappa, thickness, v, P, N);
+            return;
+        }
+
+        PH_barrier_gradient_hessian(G, H, kappa, d_hat, thickness, v, P, N);
+    }
+
     inline __device__ void PH_barrier_gradient(Vector3&       G,
                                                Float          kappa,
                                                Float          d_hat,
@@ -77,6 +170,24 @@ namespace sym::ipc_vertex_half_contact
         dHalfPlaneDdx(dDdx, v, P, N);
 
         G = dBdD * dDdx;
+    }
+
+    inline __device__ void PH_barrier_gradient(HalfPlaneBarrierModel model,
+                                               Vector3&              G,
+                                               Float                 kappa,
+                                               Float                 d_hat,
+                                               Float                 thickness,
+                                               const Vector3&        v,
+                                               const Vector3&        P,
+                                               const Vector3&        N)
+    {
+        if(model == HalfPlaneBarrierModel::Quadratic)
+        {
+            PH_quadratic_barrier_gradient(G, kappa, thickness, v, P, N);
+            return;
+        }
+
+        PH_barrier_gradient(G, kappa, d_hat, thickness, v, P, N);
     }
 
     inline __device__ void compute_tan_basis(Vector3& e1, Vector3& e2, const Vector3& N)
