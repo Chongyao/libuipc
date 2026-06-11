@@ -74,6 +74,7 @@ void TWPContext::ensure_storage(SizeT vertex_count)
     backward_corrections.resize(vertex_count);
     residual.resize(vertex_count);
     proximity_distances.resize(vertex_count);
+    proximity_constraint_ids.resize(vertex_count);
     diagnostics.ensure_vertex_storage(vertex_count);
 }
 
@@ -98,6 +99,7 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     residual.fill(1.0);
     backward_lambdas.fill(0.0);
     proximity_distances.fill(Float{1e30});
+    proximity_constraint_ids.fill(-1);
     diagnostics.reset();
 
     remaining_search_bound = 0.0;

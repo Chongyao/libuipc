@@ -11,16 +11,28 @@
 
 namespace uipc::backend::cuda
 {
+void GlobalTWP::Impl::refresh_self_collision_candidates()
+{
+    if(!global_trajectory_filter || !simplex_trajectory_filter)
+        return;
+
+    Timer timer{"TWP Refresh Self Collision Candidates"};
+
+    global_vertex_manager->setup_ccd(context.x.view());
+    global_trajectory_filter->detect(1.0);
+    global_vertex_manager->restore_ccd();
+}
+
 void GlobalTWP::Impl::proximity_search(Float search_bound)
 {
     Timer timer{"TWP Proximity Search"};
 
     constraints.clear();
 
-    if(global_trajectory_filter && simplex_trajectory_filter)
-    {
-        global_trajectory_filter->detect(1.0);
-    }
+    bool self_collision_enabled =
+        !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
+    if(self_collision_enabled)
+        refresh_self_collision_candidates();
 
     SizeT vertex_count = context.x.size();
     SizeT plane_count  = half_plane ? half_plane->positions().size() : 0;
@@ -114,7 +126,8 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                    });
     }
 
-    append_simplex_contact_constraints(search_bound);
+    if(self_collision_enabled)
+        append_simplex_contact_constraints();
     constraints.set_host_contact_constraint_count(constraints.count);
 }
 }  // namespace uipc::backend::cuda

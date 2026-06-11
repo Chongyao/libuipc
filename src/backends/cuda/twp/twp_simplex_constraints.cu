@@ -29,7 +29,7 @@ MUDA_GENERIC Float simplex_linearized_offset(const Vector12& gradient,
 }
 }  // namespace
 
-void GlobalTWP::Impl::append_simplex_contact_constraints(Float search_bound)
+void GlobalTWP::Impl::append_simplex_contact_constraints()
 {
     Timer timer{"TWP Append Simplex Contact Constraints"};
 
@@ -64,8 +64,9 @@ void GlobalTWP::Impl::append_simplex_contact_constraints(Float search_bound)
                 x = context.x.viewer().name("x"),
                 thicknesses =
                     global_vertex_manager->thicknesses().viewer().name("thicknesses"),
-                d_hats = global_vertex_manager->d_hats().viewer().name("d_hats"),
-                search_bound] __device__(int idx) mutable
+                d_hats =
+                    global_vertex_manager->d_hats().viewer().name("d_hats")] __device__(
+                   int idx) mutable
                {
                    Vector2i candidate = PTs(idx);
                    Vector3i tri       = surf_triangles(candidate(1));
@@ -89,10 +90,6 @@ void GlobalTWP::Impl::append_simplex_contact_constraints(Float search_bound)
 
                    Float distance2 = 0.0;
                    distance::point_triangle_distance2(flag, P, T0, T1, T2, distance2);
-
-                   Float search_radius = thickness + d_hat + search_bound;
-                   if(distance2 > search_radius * search_radius)
-                       return;
 
                    Vector12 gradient = Vector12::Zero();
                    distance::point_triangle_distance2_gradient(
@@ -135,8 +132,9 @@ void GlobalTWP::Impl::append_simplex_contact_constraints(Float search_bound)
                 x = context.x.viewer().name("x"),
                 thicknesses =
                     global_vertex_manager->thicknesses().viewer().name("thicknesses"),
-                d_hats = global_vertex_manager->d_hats().viewer().name("d_hats"),
-                search_bound] __device__(int idx) mutable
+                d_hats =
+                    global_vertex_manager->d_hats().viewer().name("d_hats")] __device__(
+                   int idx) mutable
                {
                    Vector2i candidate = EEs(idx);
                    Vector2i e0        = surf_edges(candidate(0));
@@ -161,10 +159,6 @@ void GlobalTWP::Impl::append_simplex_contact_constraints(Float search_bound)
 
                    Float distance2 = 0.0;
                    distance::edge_edge_distance2(flag, E0, E1, E2, E3, distance2);
-
-                   Float search_radius = thickness + d_hat + search_bound;
-                   if(distance2 > search_radius * search_radius)
-                       return;
 
                    Vector12 gradient = Vector12::Zero();
                    distance::edge_edge_distance2_gradient(

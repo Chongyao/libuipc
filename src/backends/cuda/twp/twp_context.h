@@ -82,6 +82,7 @@ struct TWPContext
     muda::DeviceBuffer<Float>   backward_lambdas;
     muda::DeviceBuffer<Float>   target_edge_length_squares;
     muda::DeviceBuffer<Float>   proximity_distances;
+    muda::DeviceBuffer<IndexT>  proximity_constraint_ids;
 
     Float remaining_search_bound = 0.0;
 

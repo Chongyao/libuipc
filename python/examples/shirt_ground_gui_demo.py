@@ -36,6 +36,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_SHIRT = REPO_ROOT / "output" / "unisex_shirt.obj"
 DEFAULT_WORKSPACE = REPO_ROOT / "output" / "python" / "shirt_ground_gui_demo"
 INITIAL_Y_OFFSET = 1.0
+DEFAULT_TWP_CONVERGENCE_MAX_ITER = 100000
 _LOG_FILE_HANDLE = None
 
 
@@ -83,8 +84,16 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["constitution"] = args.contact
     config["contact"]["friction"]["enable"] = False
     config["contact"]["d_hat"] = args.d_hat
+    twp_max_iter = (
+        args.twp_max_iter
+        if args.twp_max_iter is not None
+        else DEFAULT_TWP_CONVERGENCE_MAX_ITER
+    )
+    config["contact"]["twp"]["max_iter"] = twp_max_iter
     config["contact"]["twp"]["debug"] = int(args.twp_debug)
     config["contact"]["twp"]["edge_sigma"] = args.twp_edge_sigma
+    config["contact"]["twp"]["backward_max_iter"] = args.twp_backward_max_iter
+    config["contact"]["twp"]["self_collision_enable"] = int(not args.disable_twp_self_collision)
     config["line_search"]["enable"] = int(not args.disable_line_search)
     config["line_search"]["max_iter"] = args.line_search_max_iter
     config["newton"]["max_iter"] = args.newton_max_iter
@@ -220,7 +229,15 @@ def parse_args():
     parser.add_argument("--bending-stiffness", type=float, default=5.0e3)
     parser.add_argument("--d-hat", type=float, default=0.001)
     parser.add_argument("--twp-debug", action="store_true")
+    parser.add_argument(
+        "--twp-max-iter",
+        type=int,
+        default=None,
+        help="limit TWP outer iterations; omitted means run until convergence with a large safety cap",
+    )
     parser.add_argument("--twp-edge-sigma", type=float, default=1.1)
+    parser.add_argument("--twp-backward-max-iter", type=int, default=32)
+    parser.add_argument("--disable-twp-self-collision", action="store_true")
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--line-search-max-iter", type=int, default=8)
     parser.add_argument("--disable-line-search", action="store_true")

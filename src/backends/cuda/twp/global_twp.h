@@ -34,10 +34,12 @@ class GlobalTWP final : public SimSystem
         void debug_log_state(std::string_view stage);
 
         void ensure_storage(SizeT vertex_count);
+        Float compute_full_step_toi();
         void reset_algorithm_state();
         void prepare_edge_reference_length_squares();
         void proximity_search(Float search_bound);
-        void append_simplex_contact_constraints(Float search_bound);
+        void refresh_self_collision_candidates();
+        void append_simplex_contact_constraints();
         void refresh_edge_constraints();
         void backward();
         void forward();
@@ -62,6 +64,8 @@ class GlobalTWP final : public SimSystem
         S<const geometry::AttributeSlot<Float>>  d_min_attr;
         S<const geometry::AttributeSlot<Float>>  d_max_attr;
         S<const geometry::AttributeSlot<Float>>  edge_sigma_attr;
+        S<const geometry::AttributeSlot<IndexT>> backward_max_iter_attr;
+        S<const geometry::AttributeSlot<IndexT>> self_collision_enable_attr;
         S<const geometry::AttributeSlot<IndexT>> debug_attr;
 
         TWPContext        context;

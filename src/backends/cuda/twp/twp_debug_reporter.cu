@@ -34,6 +34,22 @@ const char* constraint_type_name(TWPConstraintType type)
     }
 }
 
+bool has_duplicate_valid_vertex(const Vector4i& vertices)
+{
+    for(IndexT i = 0; i < 4; ++i)
+    {
+        IndexT vi = vertices(i);
+        if(vi < 0)
+            continue;
+        for(IndexT j = i + 1; j < 4; ++j)
+        {
+            if(vi == vertices(j))
+                return true;
+        }
+    }
+    return false;
+}
+
 struct TWPHostDebugSummary
 {
     std::array<IndexT, 4> type_counts = {0, 0, 0, 0};
@@ -53,11 +69,19 @@ struct TWPHostDebugSummary
     Float min_gap_lambda = 0.0;
 
     IndexT min_proximity_vertex = -1;
+    IndexT min_proximity_constraint = -1;
+    TWPConstraintType min_proximity_type = TWPConstraintType::VertexHalfPlane;
+    Vector4i min_proximity_vertices = Vector4i{-1, -1, -1, -1};
+    bool min_proximity_has_duplicate_vertex = false;
     Float min_proximity_distance = 0.0;
     IndexT finite_proximity_vertices = 0;
     IndexT near_zero_proximity_vertices = 0;
 
     IndexT min_alpha_vertex = -1;
+    IndexT min_alpha_constraint = -1;
+    TWPConstraintType min_alpha_type = TWPConstraintType::VertexHalfPlane;
+    Vector4i min_alpha_vertices = Vector4i{-1, -1, -1, -1};
+    bool min_alpha_has_duplicate_vertex = false;
     Float min_alpha = 1.0;
     Float min_alpha_proximity_distance = 0.0;
     Float min_alpha_step_norm = 0.0;
@@ -65,6 +89,11 @@ struct TWPHostDebugSummary
     IndexT max_step_vertex = -1;
     Float max_step_norm = 0.0;
     Float max_step_alpha = 1.0;
+
+    IndexT max_backward_displacement_vertex = -1;
+    Float max_backward_displacement = 0.0;
+    Float max_backward_displacement_clearance_x = 0.0;
+    Float max_backward_displacement_clearance_y = 0.0;
 };
 
 TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
@@ -141,13 +170,20 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
     if(vertex_count > 0)
     {
         std::vector<Float> proximity_distances(vertex_count);
+        std::vector<IndexT> proximity_constraint_ids(vertex_count);
         std::vector<Float> safe_step_alphas(vertex_count);
         std::vector<Float> step_norms(vertex_count);
+        std::vector<Vector3> x(vertex_count);
+        std::vector<Vector3> y(vertex_count);
+        std::vector<Vector3> target_y(vertex_count);
 
         muda::BufferLaunch()
             .copy<Float>(proximity_distances.data(),
                          std::as_const(context.proximity_distances)
                              .view(0, vertex_count))
+            .copy<IndexT>(proximity_constraint_ids.data(),
+                          std::as_const(context.proximity_constraint_ids)
+                              .view(0, vertex_count))
             .copy<Float>(safe_step_alphas.data(),
                          std::as_const(
                              context.diagnostics.forward.safe_step_alphas)
@@ -155,6 +191,10 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
             .copy<Float>(step_norms.data(),
                          std::as_const(context.diagnostics.forward.step_norms)
                              .view(0, vertex_count))
+            .copy<Vector3>(x.data(), std::as_const(context.x).view(0, vertex_count))
+            .copy<Vector3>(y.data(), std::as_const(context.y).view(0, vertex_count))
+            .copy<Vector3>(target_y.data(),
+                           std::as_const(context.target_y).view(0, vertex_count))
             .wait();
 
         summary.min_proximity_distance = std::numeric_limits<Float>::infinity();
@@ -170,6 +210,8 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
                 {
                     summary.min_proximity_distance = D;
                     summary.min_proximity_vertex   = v;
+                    summary.min_proximity_constraint =
+                        proximity_constraint_ids[v];
                 }
             }
 
@@ -181,6 +223,7 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
                 summary.min_alpha_proximity_distance =
                     std::isfinite(D) && D < Float{1e29} ? D : Float{-1.0};
                 summary.min_alpha_step_norm = step_norms[v];
+                summary.min_alpha_constraint = proximity_constraint_ids[v];
             }
 
             Float step = step_norms[v];
@@ -190,11 +233,50 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
                 summary.max_step_vertex = v;
                 summary.max_step_alpha = alpha;
             }
+
+            Float backward_displacement = (y[v] - target_y[v]).norm();
+            if(std::isfinite(backward_displacement)
+               && backward_displacement > summary.max_backward_displacement)
+            {
+                summary.max_backward_displacement = backward_displacement;
+                summary.max_backward_displacement_vertex = v;
+            }
         }
 
         if(!std::isfinite(summary.min_proximity_distance))
             summary.min_proximity_distance = -1.0;
     }
+
+    auto fill_constraint_metadata = [&](IndexT             constraint,
+                                        TWPConstraintType& type,
+                                        Vector4i&         vertices)
+    {
+        if(constraint < 0 || constraint >= constraint_count)
+            return;
+
+        TWPConstraintType host_type;
+        Vector4i          host_vertices;
+        muda::BufferLaunch()
+            .copy<TWPConstraintType>(&host_type,
+                                     std::as_const(constraints.types).view(constraint, 1))
+            .copy<Vector4i>(&host_vertices,
+                            std::as_const(constraints.vertex_ids)
+                                .view(constraint, 1))
+            .wait();
+        type     = host_type;
+        vertices = host_vertices;
+    };
+
+    fill_constraint_metadata(summary.min_proximity_constraint,
+                             summary.min_proximity_type,
+                             summary.min_proximity_vertices);
+    fill_constraint_metadata(summary.min_alpha_constraint,
+                             summary.min_alpha_type,
+                             summary.min_alpha_vertices);
+    summary.min_proximity_has_duplicate_vertex =
+        has_duplicate_valid_vertex(summary.min_proximity_vertices);
+    summary.min_alpha_has_duplicate_vertex =
+        has_duplicate_valid_vertex(summary.min_alpha_vertices);
 
     return summary;
 }
@@ -379,8 +461,11 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
             "min_gap[id={}, type={}, vertices=({}, {}, {}, {}), gap={}, lambda={}], "
             "forward[residual={}, max_step={}, min_alpha={}, limited={}, "
             "min_D_vertex={}, min_D={}, finite_D={}, near_zero_D={}, "
+            "min_D_constraint[id={}, type={}, vertices=({}, {}, {}, {}), duplicate_vertex={}], "
             "min_alpha_vertex={}, min_alpha_D={}, min_alpha_step={}, "
-            "max_step_vertex={}, max_step_alpha={}]",
+            "min_alpha_constraint[id={}, type={}, vertices=({}, {}, {}, {}), duplicate_vertex={}], "
+            "max_step_vertex={}, max_step_alpha={}, "
+            "max_backward_displacement_vertex={}, max_backward_displacement={}]",
             stage,
             plane_count,
             has_half_plane && has_half_plane_vertex_reporter,
@@ -438,11 +523,27 @@ void GlobalTWP::Impl::debug_log_state(std::string_view stage)
             host_summary.min_proximity_distance,
             host_summary.finite_proximity_vertices,
             host_summary.near_zero_proximity_vertices,
+            host_summary.min_proximity_constraint,
+            constraint_type_name(host_summary.min_proximity_type),
+            host_summary.min_proximity_vertices(0),
+            host_summary.min_proximity_vertices(1),
+            host_summary.min_proximity_vertices(2),
+            host_summary.min_proximity_vertices(3),
+            host_summary.min_proximity_has_duplicate_vertex,
             host_summary.min_alpha_vertex,
             host_summary.min_alpha_proximity_distance,
             host_summary.min_alpha_step_norm,
+            host_summary.min_alpha_constraint,
+            constraint_type_name(host_summary.min_alpha_type),
+            host_summary.min_alpha_vertices(0),
+            host_summary.min_alpha_vertices(1),
+            host_summary.min_alpha_vertices(2),
+            host_summary.min_alpha_vertices(3),
+            host_summary.min_alpha_has_duplicate_vertex,
             host_summary.max_step_vertex,
-            host_summary.max_step_alpha);
+            host_summary.max_step_alpha,
+            host_summary.max_backward_displacement_vertex,
+            host_summary.max_backward_displacement);
     }
 }
 }  // namespace uipc::backend::cuda

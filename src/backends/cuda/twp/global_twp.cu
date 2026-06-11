@@ -53,6 +53,10 @@ void GlobalTWP::do_build()
     m_impl.d_min_attr    = config.find<Float>("contact/twp/d_min");
     m_impl.d_max_attr    = config.find<Float>("contact/twp/d_max");
     m_impl.edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
+    m_impl.backward_max_iter_attr =
+        config.find<IndexT>("contact/twp/backward_max_iter");
+    m_impl.self_collision_enable_attr =
+        config.find<IndexT>("contact/twp/self_collision_enable");
     m_impl.debug_attr    = config.find<IndexT>("contact/twp/debug");
 
     on_init_scene(
@@ -81,6 +85,36 @@ void GlobalTWP::Impl::ensure_storage(SizeT vertex_count)
     constraints.resize(vertex_count * plane_count + edge_count);
 }
 
+Float GlobalTWP::Impl::compute_full_step_toi()
+{
+    constexpr Float ClearanceTolerance = 1e-12;
+    if(half_plane && half_plane_vertex_reporter
+       && half_plane->positions().size() > 0)
+    {
+        Float target_clearance =
+            compute_min_clearance(global_vertex_manager->positions());
+        if(target_clearance <= ClearanceTolerance)
+            return 0.0;
+    }
+
+    bool self_collision_enabled =
+        !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
+    if(!self_collision_enabled)
+        return 1.0;
+
+    if(!global_trajectory_filter)
+        return 1.0;
+
+    Timer timer{"TWP Full Step CCD Gate"};
+
+    global_vertex_manager->setup_ccd(global_vertex_manager->prev_positions());
+    global_trajectory_filter->detect(1.0);
+    Float toi = global_trajectory_filter->filter_toi(1.0);
+    global_vertex_manager->restore_ccd();
+
+    return toi < 1.0 ? toi : 1.0;
+}
+
 bool GlobalTWP::Impl::debug_enabled() const
 {
     return debug_attr && debug_attr->view()[0] != 0;
@@ -100,12 +134,24 @@ void GlobalTWP::Impl::backward()
     info.global_vertex_manager          = global_vertex_manager.view();
     info.finite_element_method          = finite_element_method.view();
     info.finite_element_vertex_reporter = finite_element_vertex_reporter.view();
+    info.max_iterations = backward_max_iter_attr ? backward_max_iter_attr->view()[0] : 32;
     backward_solver.solve(info);
 }
 
 void GlobalTWP::Impl::project()
 {
     Timer timer{"TWP"};
+
+    Float full_step_toi = compute_full_step_toi();
+    if(full_step_toi >= 1.0)
+    {
+        if(debug_enabled())
+            logger::warn("TWP skipped: full-step CCD is collision free.");
+        return;
+    }
+
+    if(debug_enabled())
+        logger::warn("TWP active: full-step CCD toi={}.", full_step_toi);
 
     reset_algorithm_state();
     prepare_edge_reference_length_squares();

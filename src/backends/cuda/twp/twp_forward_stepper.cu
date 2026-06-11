@@ -9,7 +9,7 @@ namespace uipc::backend::cuda
 {
 namespace
 {
-__forceinline__ __device__ void atomic_min_positive(Float* address, Float value)
+__forceinline__ __device__ bool atomic_min_positive(Float* address, Float value)
 {
     if constexpr(sizeof(Float) == sizeof(double))
     {
@@ -23,7 +23,7 @@ __forceinline__ __device__ void atomic_min_positive(Float* address, Float value)
             assumed = old;
             old     = atomicCAS(address_as_ull, assumed, value_as_ull);
             if(old == assumed)
-                break;
+                return true;
         }
     }
     else
@@ -37,9 +37,21 @@ __forceinline__ __device__ void atomic_min_positive(Float* address, Float value)
             assumed = old;
             old     = atomicCAS(address_as_ui, assumed, value_as_ui);
             if(old == assumed)
-                break;
+                return true;
         }
     }
+    return false;
+}
+
+template <typename DistanceView, typename SourceView>
+__forceinline__ __device__ void update_proximity_distance(DistanceView& distances,
+                                                          SourceView&   sources,
+                                                          IndexT        vertex,
+                                                          Float         distance,
+                                                          IndexT        constraint)
+{
+    if(atomic_min_positive(&distances(vertex), distance))
+        sources(vertex) = constraint;
 }
 }  // namespace
 
@@ -50,6 +62,7 @@ void GlobalTWP::Impl::forward()
     constexpr Float ForwardSafety = 0.99;
 
     context.proximity_distances.fill(Float{1e30});
+    context.proximity_constraint_ids.fill(-1);
     context.diagnostics.forward.safe_step_alphas.fill(1.0);
 
     const IndexT constraint_count = constraints.host_total_constraint_count();
@@ -67,6 +80,9 @@ void GlobalTWP::Impl::forward()
                     x = context.x.viewer().name("x"),
                     proximity_distances =
                         context.proximity_distances.viewer().name("proximity_distances"),
+                    proximity_constraint_ids =
+                        context.proximity_constraint_ids.viewer().name(
+                            "proximity_constraint_ids"),
                     thicknesses =
                         global_vertex_manager->thicknesses().viewer().name("thicknesses")] __device__(
                        int i) mutable
@@ -80,8 +96,12 @@ void GlobalTWP::Impl::forward()
                            Vector3 N = normals(i);
                            Float   plane_offset = offsets(i) - thicknesses(v);
                            Float   distance = x(v).dot(N) - plane_offset;
-                           distance = distance >= 0.0 ? distance : -distance;
-                           atomic_min_positive(&proximity_distances(v), distance);
+                           distance = distance > 0.0 ? distance : 0.0;
+                           update_proximity_distance(proximity_distances,
+                                                     proximity_constraint_ids,
+                                                     v,
+                                                     distance,
+                                                     i);
                        }
                        else if(type == TWPConstraintType::PointTriangle)
                        {
@@ -99,8 +119,11 @@ void GlobalTWP::Impl::forward()
                                distance2 > 0.0 ? sqrt(distance2) : Float{0.0};
 
                            for(IndexT local_i = 0; local_i < 4; ++local_i)
-                               atomic_min_positive(&proximity_distances(ids(local_i)),
-                                                   distance);
+                               update_proximity_distance(proximity_distances,
+                                                         proximity_constraint_ids,
+                                                         ids(local_i),
+                                                         distance,
+                                                         i);
                        }
                        else if(type == TWPConstraintType::EdgeEdge)
                        {
@@ -118,8 +141,11 @@ void GlobalTWP::Impl::forward()
                                distance2 > 0.0 ? sqrt(distance2) : Float{0.0};
 
                            for(IndexT local_i = 0; local_i < 4; ++local_i)
-                               atomic_min_positive(&proximity_distances(ids(local_i)),
-                                                   distance);
+                               update_proximity_distance(proximity_distances,
+                                                         proximity_constraint_ids,
+                                                         ids(local_i),
+                                                         distance,
+                                                         i);
                        }
                    });
     }
