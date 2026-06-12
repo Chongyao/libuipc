@@ -170,6 +170,11 @@ class SimplexTrajectoryFilter : public TrajectoryFilter
     muda::CBufferView<Vector3i> PEs() const noexcept;
     muda::CBufferView<Vector2i> PPs() const noexcept;
 
+    void replace_actives(muda::CBufferView<Vector4i> PTs,
+                         muda::CBufferView<Vector4i> EEs,
+                         muda::CBufferView<Vector3i> PEs,
+                         muda::CBufferView<Vector2i> PPs) noexcept;
+
     muda::CBufferView<Vector4i> friction_PTs() const noexcept;
     muda::CBufferView<Vector4i> friction_EEs() const noexcept;
     muda::CBufferView<Vector3i> friction_PEs() const noexcept;

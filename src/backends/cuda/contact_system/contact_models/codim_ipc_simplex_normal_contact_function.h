@@ -5,8 +5,39 @@
 
 namespace uipc::backend::cuda
 {
+enum class SimplexBarrierModel : IndexT
+{
+    IPC = 0,
+    Quadratic = 1,
+};
+
 namespace sym::codim_ipc_simplex_contact
 {
+    inline __device__ Float quadratic_target_distance(Float thickness, Float d_hat)
+    {
+        return thickness > d_hat ? thickness : d_hat;
+    }
+
+    inline __device__ Float regularized_distance(Float D, Float target)
+    {
+        Float eps = target * Float{1e-6};
+        eps = eps > Float{1e-12} ? eps : Float{1e-12};
+        return sqrt(D + eps * eps);
+    }
+
+    template <typename Grad, typename Hess>
+    inline __device__ void linear_distance_derivatives(Grad&       grad_d,
+                                                       Hess&       hess_d,
+                                                       const Grad& grad_D,
+                                                       const Hess& hess_D,
+                                                       Float       distance)
+    {
+        Float inv_2d  = Float{0.5} / distance;
+        Float inv_4d3 = Float{0.25} / (distance * distance * distance);
+        grad_d = inv_2d * grad_D;
+        hess_d = inv_2d * hess_D - inv_4d3 * grad_D * grad_D.transpose();
+    }
+
     inline __device__ Float PT_kappa(const muda::CDense2D<ContactCoeff>& table,
                                      const Vector4i&                     cids)
     {
@@ -87,6 +118,46 @@ namespace sym::codim_ipc_simplex_contact
         Float B;
         KappaBarrier(B, kappa, D, d_hat, thickness);
         return B;
+    }
+
+    inline __device__ Float PT_quadratic_barrier_energy(const Vector4i& flag,
+                                                        Float           kappa,
+                                                        Float           d_hat,
+                                                        Float           thickness,
+                                                        const Vector3&  P,
+                                                        const Vector3&  T0,
+                                                        const Vector3&  T1,
+                                                        const Vector3&  T2)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_triangle_distance2(flag, P, T0, T1, T2, D);
+
+        // Use a linear-distance gap so kappa has the same stiffness meaning as
+        // PH quadratic contact. d_hat keeps zero-thickness simplex contacts active.
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float gap = regularized_distance(D, target) - target;
+        if(gap >= 0.0)
+            return 0.0;
+
+        return 0.5 * kappa * gap * gap;
+    }
+
+    inline __device__ Float PT_barrier_energy(SimplexBarrierModel model,
+                                              const Vector4i&     flag,
+                                              Float               kappa,
+                                              Float               d_hat,
+                                              Float               thickness,
+                                              const Vector3&      P,
+                                              const Vector3&      T0,
+                                              const Vector3&      T1,
+                                              const Vector3&      T2)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+            return PT_quadratic_barrier_energy(flag, kappa, d_hat, thickness, P, T0, T1, T2);
+
+        return PT_barrier_energy(flag, kappa, d_hat, thickness, P, T0, T1, T2);
     }
 
     inline __device__ void PT_barrier_gradient_hessian(Vector12&      G,
@@ -172,6 +243,68 @@ namespace sym::codim_ipc_simplex_contact
         H = ddBddD * GradD * GradD.transpose() + dBdD * HessD;
     }
 
+    inline __device__ void PT_quadratic_barrier_gradient_hessian(Vector12&       G,
+                                                                 Matrix12x12&    H,
+                                                                 const Vector4i& flag,
+                                                                 Float           kappa,
+                                                                 Float           d_hat,
+                                                                 Float           thickness,
+                                                                 const Vector3&  P,
+                                                                 const Vector3&  T0,
+                                                                 const Vector3&  T1,
+                                                                 const Vector3&  T2)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_triangle_distance2(flag, P, T0, T1, T2, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector12::Zero();
+            H = Matrix12x12::Zero();
+            return;
+        }
+
+        Vector12 GradD;
+        point_triangle_distance2_gradient(flag, P, T0, T1, T2, GradD);
+
+        Matrix12x12 HessD;
+        point_triangle_distance2_hessian(flag, P, T0, T1, T2, HessD);
+
+        Vector12 grad_d;
+        Matrix12x12 hess_d;
+        linear_distance_derivatives(grad_d, hess_d, GradD, HessD, distance);
+
+        G = kappa * gap * grad_d;
+        H = kappa * (grad_d * grad_d.transpose() + gap * hess_d);
+    }
+
+    inline __device__ void PT_barrier_gradient_hessian(SimplexBarrierModel model,
+                                                       Vector12&           G,
+                                                       Matrix12x12&        H,
+                                                       const Vector4i&     flag,
+                                                       Float               kappa,
+                                                       Float               d_hat,
+                                                       Float               thickness,
+                                                       const Vector3&      P,
+                                                       const Vector3&      T0,
+                                                       const Vector3&      T1,
+                                                       const Vector3&      T2)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            PT_quadratic_barrier_gradient_hessian(
+                G, H, flag, kappa, d_hat, thickness, P, T0, T1, T2);
+            return;
+        }
+
+        PT_barrier_gradient_hessian(G, H, flag, kappa, d_hat, thickness, P, T0, T1, T2);
+    }
+
     inline __device__ void PT_barrier_gradient(Vector12&       G,
                                                const Vector4i& flag,
                                                Float           kappa,
@@ -195,6 +328,55 @@ namespace sym::codim_ipc_simplex_contact
         dKappaBarrierdD(dBdD, kappa, D, d_hat, thickness);
 
         G = dBdD * GradD;
+    }
+
+    inline __device__ void PT_quadratic_barrier_gradient(Vector12&       G,
+                                                         const Vector4i& flag,
+                                                         Float           kappa,
+                                                         Float           d_hat,
+                                                         Float           thickness,
+                                                         const Vector3&  P,
+                                                         const Vector3&  T0,
+                                                         const Vector3&  T1,
+                                                         const Vector3&  T2)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_triangle_distance2(flag, P, T0, T1, T2, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector12::Zero();
+            return;
+        }
+
+        Vector12 GradD;
+        point_triangle_distance2_gradient(flag, P, T0, T1, T2, GradD);
+        G = kappa * gap * (Float{0.5} / distance) * GradD;
+    }
+
+    inline __device__ void PT_barrier_gradient(SimplexBarrierModel model,
+                                               Vector12&           G,
+                                               const Vector4i&     flag,
+                                               Float               kappa,
+                                               Float               d_hat,
+                                               Float               thickness,
+                                               const Vector3&      P,
+                                               const Vector3&      T0,
+                                               const Vector3&      T1,
+                                               const Vector3&      T2)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            PT_quadratic_barrier_gradient(G, flag, kappa, d_hat, thickness, P, T0, T1, T2);
+            return;
+        }
+
+        PT_barrier_gradient(G, flag, kappa, d_hat, thickness, P, T0, T1, T2);
     }
 
 
@@ -227,6 +409,61 @@ namespace sym::codim_ipc_simplex_contact
         edge_edge_mollifier(Ea0, Ea1, Eb0, Eb1, eps_x, ek);
 
         return ek * B;
+    }
+
+    inline __device__ Float EE_quadratic_barrier_energy(const Vector4i& flag,
+                                                        Float           kappa,
+                                                        Float           d_hat,
+                                                        Float           thickness,
+                                                        const Vector3&  Ea0,
+                                                        const Vector3&  Ea1,
+                                                        const Vector3&  Eb0,
+                                                        const Vector3&  Eb1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        edge_edge_distance2(flag, Ea0, Ea1, Eb0, Eb1, D);
+
+        // Use a linear-distance gap so kappa has the same stiffness meaning as
+        // PH quadratic contact. d_hat keeps zero-thickness simplex contacts active.
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float gap = regularized_distance(D, target) - target;
+        if(gap >= 0.0)
+            return 0.0;
+
+        return 0.5 * kappa * gap * gap;
+    }
+
+    inline __device__ Float EE_barrier_energy(SimplexBarrierModel model,
+                                              const Vector4i&     flag,
+                                              Float               kappa,
+                                              Float               d_hat,
+                                              Float               thickness,
+                                              const Vector3&      t0_Ea0,
+                                              const Vector3&      t0_Ea1,
+                                              const Vector3&      t0_Eb0,
+                                              const Vector3&      t0_Eb1,
+                                              const Vector3&      Ea0,
+                                              const Vector3&      Ea1,
+                                              const Vector3&      Eb0,
+                                              const Vector3&      Eb1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+            return EE_quadratic_barrier_energy(flag, kappa, d_hat, thickness, Ea0, Ea1, Eb0, Eb1);
+
+        return mollified_EE_barrier_energy(flag,
+                                           kappa,
+                                           d_hat,
+                                           thickness,
+                                           t0_Ea0,
+                                           t0_Ea1,
+                                           t0_Eb0,
+                                           t0_Eb1,
+                                           Ea0,
+                                           Ea1,
+                                           Eb0,
+                                           Eb1);
     }
 
     inline __device__ void mollified_EE_barrier_gradient_hessian(Vector12&    G,
@@ -350,6 +587,150 @@ namespace sym::codim_ipc_simplex_contact
         G = Gradek * B + ek * GradB;
     }
 
+    inline __device__ void EE_quadratic_barrier_gradient_hessian(Vector12&       G,
+                                                                 Matrix12x12&    H,
+                                                                 const Vector4i& flag,
+                                                                 Float           kappa,
+                                                                 Float           d_hat,
+                                                                 Float           thickness,
+                                                                 const Vector3&  Ea0,
+                                                                 const Vector3&  Ea1,
+                                                                 const Vector3&  Eb0,
+                                                                 const Vector3&  Eb1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        edge_edge_distance2(flag, Ea0, Ea1, Eb0, Eb1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector12::Zero();
+            H = Matrix12x12::Zero();
+            return;
+        }
+
+        Vector12 GradD;
+        edge_edge_distance2_gradient(flag, Ea0, Ea1, Eb0, Eb1, GradD);
+
+        Matrix12x12 HessD;
+        edge_edge_distance2_hessian(flag, Ea0, Ea1, Eb0, Eb1, HessD);
+
+        Vector12 grad_d;
+        Matrix12x12 hess_d;
+        linear_distance_derivatives(grad_d, hess_d, GradD, HessD, distance);
+
+        G = kappa * gap * grad_d;
+        H = kappa * (grad_d * grad_d.transpose() + gap * hess_d);
+    }
+
+    inline __device__ void EE_barrier_gradient_hessian(SimplexBarrierModel model,
+                                                       Vector12&           G,
+                                                       Matrix12x12&        H,
+                                                       const Vector4i&     flag,
+                                                       Float               kappa,
+                                                       Float               d_hat,
+                                                       Float               thickness,
+                                                       const Vector3&      t0_Ea0,
+                                                       const Vector3&      t0_Ea1,
+                                                       const Vector3&      t0_Eb0,
+                                                       const Vector3&      t0_Eb1,
+                                                       const Vector3&      Ea0,
+                                                       const Vector3&      Ea1,
+                                                       const Vector3&      Eb0,
+                                                       const Vector3&      Eb1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            EE_quadratic_barrier_gradient_hessian(
+                G, H, flag, kappa, d_hat, thickness, Ea0, Ea1, Eb0, Eb1);
+            return;
+        }
+
+        mollified_EE_barrier_gradient_hessian(G,
+                                              H,
+                                              flag,
+                                              kappa,
+                                              d_hat,
+                                              thickness,
+                                              t0_Ea0,
+                                              t0_Ea1,
+                                              t0_Eb0,
+                                              t0_Eb1,
+                                              Ea0,
+                                              Ea1,
+                                              Eb0,
+                                              Eb1);
+    }
+
+    inline __device__ void EE_quadratic_barrier_gradient(Vector12&       G,
+                                                         const Vector4i& flag,
+                                                         Float           kappa,
+                                                         Float           d_hat,
+                                                         Float           thickness,
+                                                         const Vector3&  Ea0,
+                                                         const Vector3&  Ea1,
+                                                         const Vector3&  Eb0,
+                                                         const Vector3&  Eb1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        edge_edge_distance2(flag, Ea0, Ea1, Eb0, Eb1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector12::Zero();
+            return;
+        }
+
+        Vector12 GradD;
+        edge_edge_distance2_gradient(flag, Ea0, Ea1, Eb0, Eb1, GradD);
+        G = kappa * gap * (Float{0.5} / distance) * GradD;
+    }
+
+    inline __device__ void EE_barrier_gradient(SimplexBarrierModel model,
+                                               Vector12&           G,
+                                               const Vector4i&     flag,
+                                               Float               kappa,
+                                               Float               d_hat,
+                                               Float               thickness,
+                                               const Vector3&      t0_Ea0,
+                                               const Vector3&      t0_Ea1,
+                                               const Vector3&      t0_Eb0,
+                                               const Vector3&      t0_Eb1,
+                                               const Vector3&      Ea0,
+                                               const Vector3&      Ea1,
+                                               const Vector3&      Eb0,
+                                               const Vector3&      Eb1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            EE_quadratic_barrier_gradient(G, flag, kappa, d_hat, thickness, Ea0, Ea1, Eb0, Eb1);
+            return;
+        }
+
+        mollified_EE_barrier_gradient(G,
+                                      flag,
+                                      kappa,
+                                      d_hat,
+                                      thickness,
+                                      t0_Ea0,
+                                      t0_Ea1,
+                                      t0_Eb0,
+                                      t0_Eb1,
+                                      Ea0,
+                                      Ea1,
+                                      Eb0,
+                                      Eb1);
+    }
+
     inline __device__ Float PE_barrier_energy(const Vector3i& flag,
                                               Float           kappa,
                                               Float           d_hat,
@@ -365,6 +746,42 @@ namespace sym::codim_ipc_simplex_contact
         Float E = 0.0;
         KappaBarrier(E, kappa, D, d_hat, thickness);
         return E;
+    }
+
+    inline __device__ Float PE_quadratic_barrier_energy(const Vector3i& flag,
+                                                        Float           kappa,
+                                                        Float           d_hat,
+                                                        Float           thickness,
+                                                        const Vector3&  P,
+                                                        const Vector3&  E0,
+                                                        const Vector3&  E1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_edge_distance2(flag, P, E0, E1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float gap = regularized_distance(D, target) - target;
+        if(gap >= 0.0)
+            return 0.0;
+
+        return 0.5 * kappa * gap * gap;
+    }
+
+    inline __device__ Float PE_barrier_energy(SimplexBarrierModel model,
+                                              const Vector3i&     flag,
+                                              Float               kappa,
+                                              Float               d_hat,
+                                              Float               thickness,
+                                              const Vector3&      P,
+                                              const Vector3&      E0,
+                                              const Vector3&      E1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+            return PE_quadratic_barrier_energy(flag, kappa, d_hat, thickness, P, E0, E1);
+
+        return PE_barrier_energy(flag, kappa, d_hat, thickness, P, E0, E1);
     }
 
     inline __device__ void PE_barrier_gradient_hessian(Vector9&        G,
@@ -408,6 +825,66 @@ namespace sym::codim_ipc_simplex_contact
         H = ddBddD * GradD * GradD.transpose() + dBdD * HessD;
     }
 
+    inline __device__ void PE_quadratic_barrier_gradient_hessian(Vector9&        G,
+                                                                 Matrix9x9&      H,
+                                                                 const Vector3i& flag,
+                                                                 Float           kappa,
+                                                                 Float           d_hat,
+                                                                 Float           thickness,
+                                                                 const Vector3&  P,
+                                                                 const Vector3&  E0,
+                                                                 const Vector3&  E1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_edge_distance2(flag, P, E0, E1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector9::Zero();
+            H = Matrix9x9::Zero();
+            return;
+        }
+
+        Vector9 GradD;
+        point_edge_distance2_gradient(flag, P, E0, E1, GradD);
+
+        Matrix9x9 HessD;
+        point_edge_distance2_hessian(flag, P, E0, E1, HessD);
+
+        Vector9 grad_d;
+        Matrix9x9 hess_d;
+        linear_distance_derivatives(grad_d, hess_d, GradD, HessD, distance);
+
+        G = kappa * gap * grad_d;
+        H = kappa * (grad_d * grad_d.transpose() + gap * hess_d);
+    }
+
+    inline __device__ void PE_barrier_gradient_hessian(SimplexBarrierModel model,
+                                                       Vector9&            G,
+                                                       Matrix9x9&          H,
+                                                       const Vector3i&     flag,
+                                                       Float               kappa,
+                                                       Float               d_hat,
+                                                       Float               thickness,
+                                                       const Vector3&      P,
+                                                       const Vector3&      E0,
+                                                       const Vector3&      E1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            PE_quadratic_barrier_gradient_hessian(
+                G, H, flag, kappa, d_hat, thickness, P, E0, E1);
+            return;
+        }
+
+        PE_barrier_gradient_hessian(G, H, flag, kappa, d_hat, thickness, P, E0, E1);
+    }
+
     inline __device__ void PE_barrier_gradient(Vector9&        G,
                                                const Vector3i& flag,
                                                Float           kappa,
@@ -432,6 +909,53 @@ namespace sym::codim_ipc_simplex_contact
         G = dBdD * GradD;
     }
 
+    inline __device__ void PE_quadratic_barrier_gradient(Vector9&        G,
+                                                         const Vector3i& flag,
+                                                         Float           kappa,
+                                                         Float           d_hat,
+                                                         Float           thickness,
+                                                         const Vector3&  P,
+                                                         const Vector3&  E0,
+                                                         const Vector3&  E1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_edge_distance2(flag, P, E0, E1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector9::Zero();
+            return;
+        }
+
+        Vector9 GradD;
+        point_edge_distance2_gradient(flag, P, E0, E1, GradD);
+        G = kappa * gap * (Float{0.5} / distance) * GradD;
+    }
+
+    inline __device__ void PE_barrier_gradient(SimplexBarrierModel model,
+                                               Vector9&            G,
+                                               const Vector3i&     flag,
+                                               Float               kappa,
+                                               Float               d_hat,
+                                               Float               thickness,
+                                               const Vector3&      P,
+                                               const Vector3&      E0,
+                                               const Vector3&      E1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            PE_quadratic_barrier_gradient(G, flag, kappa, d_hat, thickness, P, E0, E1);
+            return;
+        }
+
+        PE_barrier_gradient(G, flag, kappa, d_hat, thickness, P, E0, E1);
+    }
+
     inline __device__ Float PP_barrier_energy(const Vector2i& flag,
                                               Float           kappa,
                                               Float           d_hat,
@@ -446,6 +970,40 @@ namespace sym::codim_ipc_simplex_contact
         Float E = 0.0;
         KappaBarrier(E, kappa, D, d_hat, thickness);
         return E;
+    }
+
+    inline __device__ Float PP_quadratic_barrier_energy(const Vector2i& flag,
+                                                        Float           kappa,
+                                                        Float           d_hat,
+                                                        Float           thickness,
+                                                        const Vector3&  P0,
+                                                        const Vector3&  P1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_point_distance2(flag, P0, P1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float gap = regularized_distance(D, target) - target;
+        if(gap >= 0.0)
+            return 0.0;
+
+        return 0.5 * kappa * gap * gap;
+    }
+
+    inline __device__ Float PP_barrier_energy(SimplexBarrierModel model,
+                                              const Vector2i&     flag,
+                                              Float               kappa,
+                                              Float               d_hat,
+                                              Float               thickness,
+                                              const Vector3&      P0,
+                                              const Vector3&      P1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+            return PP_quadratic_barrier_energy(flag, kappa, d_hat, thickness, P0, P1);
+
+        return PP_barrier_energy(flag, kappa, d_hat, thickness, P0, P1);
     }
 
     inline __device__ void PP_barrier_gradient_hessian(Vector6&        G,
@@ -488,6 +1046,63 @@ namespace sym::codim_ipc_simplex_contact
         H = ddBddD * GradD * GradD.transpose() + dBdD * HessD;
     }
 
+    inline __device__ void PP_quadratic_barrier_gradient_hessian(Vector6&        G,
+                                                                 Matrix6x6&      H,
+                                                                 const Vector2i& flag,
+                                                                 Float           kappa,
+                                                                 Float           d_hat,
+                                                                 Float           thickness,
+                                                                 const Vector3&  P0,
+                                                                 const Vector3&  P1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_point_distance2(flag, P0, P1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector6::Zero();
+            H = Matrix6x6::Zero();
+            return;
+        }
+
+        Vector6 GradD;
+        point_point_distance2_gradient(flag, P0, P1, GradD);
+
+        Matrix6x6 HessD;
+        point_point_distance2_hessian(flag, P0, P1, HessD);
+
+        Vector6 grad_d;
+        Matrix6x6 hess_d;
+        linear_distance_derivatives(grad_d, hess_d, GradD, HessD, distance);
+
+        G = kappa * gap * grad_d;
+        H = kappa * (grad_d * grad_d.transpose() + gap * hess_d);
+    }
+
+    inline __device__ void PP_barrier_gradient_hessian(SimplexBarrierModel model,
+                                                       Vector6&            G,
+                                                       Matrix6x6&          H,
+                                                       const Vector2i&     flag,
+                                                       Float               kappa,
+                                                       Float               d_hat,
+                                                       Float               thickness,
+                                                       const Vector3&      P0,
+                                                       const Vector3&      P1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            PP_quadratic_barrier_gradient_hessian(G, H, flag, kappa, d_hat, thickness, P0, P1);
+            return;
+        }
+
+        PP_barrier_gradient_hessian(G, H, flag, kappa, d_hat, thickness, P0, P1);
+    }
+
     inline __device__ void PP_barrier_gradient(Vector6&        G,
                                                const Vector2i& flag,
                                                Float           kappa,
@@ -509,6 +1124,51 @@ namespace sym::codim_ipc_simplex_contact
         dKappaBarrierdD(dBdD, kappa, D, d_hat, thickness);
 
         G = dBdD * GradD;
+    }
+
+    inline __device__ void PP_quadratic_barrier_gradient(Vector6&        G,
+                                                         const Vector2i& flag,
+                                                         Float           kappa,
+                                                         Float           d_hat,
+                                                         Float           thickness,
+                                                         const Vector3&  P0,
+                                                         const Vector3&  P1)
+    {
+        using namespace distance;
+
+        Float D = 0.0;
+        point_point_distance2(flag, P0, P1, D);
+
+        Float target = quadratic_target_distance(thickness, d_hat);
+        Float distance = regularized_distance(D, target);
+        Float gap = distance - target;
+        if(gap >= 0.0)
+        {
+            G = Vector6::Zero();
+            return;
+        }
+
+        Vector6 GradD;
+        point_point_distance2_gradient(flag, P0, P1, GradD);
+        G = kappa * gap * (Float{0.5} / distance) * GradD;
+    }
+
+    inline __device__ void PP_barrier_gradient(SimplexBarrierModel model,
+                                               Vector6&            G,
+                                               const Vector2i&     flag,
+                                               Float               kappa,
+                                               Float               d_hat,
+                                               Float               thickness,
+                                               const Vector3&      P0,
+                                               const Vector3&      P1)
+    {
+        if(model == SimplexBarrierModel::Quadratic)
+        {
+            PP_quadratic_barrier_gradient(G, flag, kappa, d_hat, thickness, P0, P1);
+            return;
+        }
+
+        PP_barrier_gradient(G, flag, kappa, d_hat, thickness, P0, P1);
     }
 }  // namespace sym::codim_ipc_simplex_contact
 }  // namespace uipc::backend::cuda

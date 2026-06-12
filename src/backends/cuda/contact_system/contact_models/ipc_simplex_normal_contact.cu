@@ -18,6 +18,19 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
     virtual void do_build(BuildInfo& info) override
     {
         require<IPCPipelineFlag>();
+
+        auto constitution_attr =
+            world().scene().config().find<std::string>("contact/constitution");
+        auto barrier_attr =
+            world().scene().config().find<std::string>("contact/simplex_barrier");
+
+        bool use_quadratic =
+            (constitution_attr && constitution_attr->view()[0] == "twp")
+            || (barrier_attr && barrier_attr->view()[0] == "quadratic");
+        if(use_quadratic)
+            barrier_model = SimplexBarrierModel::Quadratic;
+        else
+            barrier_model = SimplexBarrierModel::IPC;
     }
 
     virtual void do_compute_energy(EnergyInfo& info) override
@@ -37,7 +50,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                     Ps  = info.positions().viewer().name("Ps"),
                     thicknesses = info.thicknesses().viewer().name("thicknesses"),
                     d_hats = info.d_hats().viewer().name("d_hats"),
-                    dt     = info.dt()] __device__(int i) mutable
+                    dt     = info.dt(),
+                    barrier_model = barrier_model] __device__(int i) mutable
                    {
                        Vector4i PT = PTs(i);
 
@@ -66,23 +80,28 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
 
                        if constexpr(RUNTIME_CHECK)
                        {
-                           Float D;
-                           distance::point_triangle_distance2(flag, P, T0, T1, T2, D);
+                           if(barrier_model == SimplexBarrierModel::IPC)
+                           {
+                               Float D;
+                               distance::point_triangle_distance2(flag, P, T0, T1, T2, D);
 
-                           Vector2 range = D_range(thickness, d_hat);
+                               Vector2 range = D_range(thickness, d_hat);
 
-                           MUDA_ASSERT(is_active_D(range, D),
-                                       "PT[%d,%d,%d,%d] d^2(%f) out of range, (%f,%f)",
-                                       PT(0),
-                                       PT(1),
-                                       PT(2),
-                                       PT(3),
-                                       D,
-                                       range(0),
-                                       range(1));
+                               MUDA_ASSERT(
+                                   is_active_D(range, D),
+                                   "PT[%d,%d,%d,%d] d^2(%f) out of range, (%f,%f)",
+                                   PT(0),
+                                   PT(1),
+                                   PT(2),
+                                   PT(3),
+                                   D,
+                                   range(0),
+                                   range(1));
+                           }
                        }
 
-                       Es(i) = PT_barrier_energy(flag, kt2, d_hat, thickness, P, T0, T1, T2);
+                       Es(i) = PT_barrier_energy(
+                           barrier_model, flag, kt2, d_hat, thickness, P, T0, T1, T2);
                    });
 
         // Compute Edge-Edge energy
@@ -98,7 +117,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                     thicknesses = info.thicknesses().viewer().name("thicknesses"),
                     rest_Ps = info.rest_positions().viewer().name("rest_Ps"),
                     d_hats  = info.d_hats().viewer().name("d_hats"),
-                    dt      = info.dt()] __device__(int i) mutable
+                    dt      = info.dt(),
+                    barrier_model = barrier_model] __device__(int i) mutable
                    {
                        Vector4i EE = EEs(i);
 
@@ -130,35 +150,38 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
 
                        if constexpr(RUNTIME_CHECK)
                        {
-                           Float D;
-                           distance::edge_edge_distance2(flag, E0, E1, E2, E3, D);
-                           Vector2 range = D_range(thickness, d_hat);
-                           MUDA_ASSERT(is_active_D(range, D),
-                                       "EE[%d,%d,%d,%d] d^2(%f) out of range, (%f,%f)",
-                                       EE(0),
-                                       EE(1),
-                                       EE(2),
-                                       EE(3),
-                                       D,
-                                       range(0),
-                                       range(1));
+                           if(barrier_model == SimplexBarrierModel::IPC)
+                           {
+                               Float D;
+                               distance::edge_edge_distance2(flag, E0, E1, E2, E3, D);
+                               Vector2 range = D_range(thickness, d_hat);
+                               MUDA_ASSERT(
+                                   is_active_D(range, D),
+                                   "EE[%d,%d,%d,%d] d^2(%f) out of range, (%f,%f)",
+                                   EE(0),
+                                   EE(1),
+                                   EE(2),
+                                   EE(3),
+                                   D,
+                                   range(0),
+                                   range(1));
+                           }
                        }
 
 
-                       Es(i) = mollified_EE_barrier_energy(flag,
-                                                           // coefficients
-                                                           kt2,
-                                                           d_hat,
-                                                           thickness,
-                                                           // positions
-                                                           t0_Ea0,
-                                                           t0_Ea1,
-                                                           t0_Eb0,
-                                                           t0_Eb1,
-                                                           E0,
-                                                           E1,
-                                                           E2,
-                                                           E3);
+                       Es(i) = EE_barrier_energy(barrier_model,
+                                                 flag,
+                                                 kt2,
+                                                 d_hat,
+                                                 thickness,
+                                                 t0_Ea0,
+                                                 t0_Ea1,
+                                                 t0_Eb0,
+                                                 t0_Eb1,
+                                                 E0,
+                                                 E1,
+                                                 E2,
+                                                 E3);
                    });
 
         // Compute Point-Edge energy
@@ -175,7 +198,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                     thicknesses = info.thicknesses().viewer().name("thicknesses"),
                     eps_v  = info.eps_velocity(),
                     d_hats = info.d_hats().viewer().name("d_hats"),
-                    dt     = info.dt()] __device__(int i) mutable
+                    dt     = info.dt(),
+                    barrier_model = barrier_model] __device__(int i) mutable
                    {
                        Vector3i PE = PEs(i);
 
@@ -199,22 +223,26 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
 
                        if constexpr(RUNTIME_CHECK)
                        {
-                           Float D;
-                           distance::point_edge_distance2(flag, P, E0, E1, D);
+                           if(barrier_model == SimplexBarrierModel::IPC)
+                           {
+                               Float D;
+                               distance::point_edge_distance2(flag, P, E0, E1, D);
 
-                           Vector2 range = D_range(thickness, d_hat);
+                               Vector2 range = D_range(thickness, d_hat);
 
-                           MUDA_ASSERT(is_active_D(range, D),
-                                       "PE[%d,%d,%d] d^2(%f) out of range, (%f,%f)",
-                                       PE(0),
-                                       PE(1),
-                                       PE(2),
-                                       D,
-                                       range(0),
-                                       range(1));
+                               MUDA_ASSERT(is_active_D(range, D),
+                                           "PE[%d,%d,%d] d^2(%f) out of range, (%f,%f)",
+                                           PE(0),
+                                           PE(1),
+                                           PE(2),
+                                           D,
+                                           range(0),
+                                           range(1));
+                           }
                        }
 
-                       Es(i) = PE_barrier_energy(flag, kt2, d_hat, thickness, P, E0, E1);
+                       Es(i) = PE_barrier_energy(
+                           barrier_model, flag, kt2, d_hat, thickness, P, E0, E1);
                    });
 
         // Compute Point-Point energy
@@ -230,7 +258,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                     rest_Ps = info.rest_positions().viewer().name("rest_Ps"),
                     thicknesses = info.thicknesses().viewer().name("thicknesses"),
                     d_hats = info.d_hats().viewer().name("d_hats"),
-                    dt     = info.dt()] __device__(int i) mutable
+                    dt     = info.dt(),
+                    barrier_model = barrier_model] __device__(int i) mutable
                    {
                        Vector2i PP = PPs(i);
 
@@ -249,21 +278,25 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
 
                        if constexpr(RUNTIME_CHECK)
                        {
-                           Float D;
-                           distance::point_point_distance2(flag, Pa, Pb, D);
+                           if(barrier_model == SimplexBarrierModel::IPC)
+                           {
+                               Float D;
+                               distance::point_point_distance2(flag, Pa, Pb, D);
 
-                           Vector2 range = D_range(thickness, d_hat);
+                               Vector2 range = D_range(thickness, d_hat);
 
-                           MUDA_ASSERT(is_active_D(range, D),
-                                       "PP[%d,%d] d^2(%f) out of range, (%f,%f)",
-                                       PP(0),
-                                       PP(1),
-                                       D,
-                                       range(0),
-                                       range(1));
+                               MUDA_ASSERT(is_active_D(range, D),
+                                           "PP[%d,%d] d^2(%f) out of range, (%f,%f)",
+                                           PP(0),
+                                           PP(1),
+                                           D,
+                                           range(0),
+                                           range(1));
+                           }
                        }
 
-                       Es(i) = PP_barrier_energy(flag, kt2, d_hat, thickness, Pa, Pb);
+                       Es(i) =
+                           PP_barrier_energy(barrier_model, flag, kt2, d_hat, thickness, Pa, Pb);
                    });
     }
 
@@ -300,6 +333,7 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                  thicknesses = info.thicknesses().viewer().name("thicknesses"),
                  d_hats      = info.d_hats().viewer().name("d_hats"),
                  dt          = info.dt(),
+                 barrier_model = barrier_model,
                  // PT
                  PTs   = info.PTs().viewer().name("PTs"),
                  PT_Gs = info.PT_gradients().viewer().name("PT_Gs"),
@@ -348,7 +382,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         Vector12 G;
                         if(gradient_only)
                         {
-                            PT_barrier_gradient(G, flag, kt2, d_hat, thickness, P, T0, T1, T2);
+                            PT_barrier_gradient(
+                                barrier_model, G, flag, kt2, d_hat, thickness, P, T0, T1, T2);
                             DoubletVectorAssembler DVA{PT_Gs};
                             DVA.segment<4>(i * 4).write(PT, G);
                         }
@@ -356,7 +391,7 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         {
                             Matrix12x12 H;
                             PT_barrier_gradient_hessian(
-                                G, H, flag, kt2, d_hat, thickness, P, T0, T1, T2);
+                                barrier_model, G, H, flag, kt2, d_hat, thickness, P, T0, T1, T2);
                             make_spd(H);
                             DoubletVectorAssembler DVA{PT_Gs};
                             DVA.segment<4>(i * 4).write(PT, G);
@@ -394,16 +429,41 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         Vector12 G;
                         if(gradient_only)
                         {
-                            mollified_EE_barrier_gradient(
-                                G, flag, kt2, d_hat, thickness, t0_Ea0, t0_Ea1, t0_Eb0, t0_Eb1, E0, E1, E2, E3);
+                            EE_barrier_gradient(barrier_model,
+                                                G,
+                                                flag,
+                                                kt2,
+                                                d_hat,
+                                                thickness,
+                                                t0_Ea0,
+                                                t0_Ea1,
+                                                t0_Eb0,
+                                                t0_Eb1,
+                                                E0,
+                                                E1,
+                                                E2,
+                                                E3);
                             DoubletVectorAssembler DVA{EE_Gs};
                             DVA.segment<4>(i * 4).write(EE, G);
                         }
                         else
                         {
                             Matrix12x12 H;
-                            mollified_EE_barrier_gradient_hessian(
-                                G, H, flag, kt2, d_hat, thickness, t0_Ea0, t0_Ea1, t0_Eb0, t0_Eb1, E0, E1, E2, E3);
+                            EE_barrier_gradient_hessian(barrier_model,
+                                                        G,
+                                                        H,
+                                                        flag,
+                                                        kt2,
+                                                        d_hat,
+                                                        thickness,
+                                                        t0_Ea0,
+                                                        t0_Ea1,
+                                                        t0_Eb0,
+                                                        t0_Eb1,
+                                                        E0,
+                                                        E1,
+                                                        E2,
+                                                        E3);
                             make_spd(H);
                             DoubletVectorAssembler DVA{EE_Gs};
                             DVA.segment<4>(i * 4).write(EE, G);
@@ -434,7 +494,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         Vector9 G;
                         if(gradient_only)
                         {
-                            PE_barrier_gradient(G, flag, kt2, d_hat, thickness, P, E0, E1);
+                            PE_barrier_gradient(
+                                barrier_model, G, flag, kt2, d_hat, thickness, P, E0, E1);
                             DoubletVectorAssembler DVA{PE_Gs};
                             DVA.segment<3>(i * 3).write(PE, G);
                         }
@@ -442,7 +503,7 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         {
                             Matrix9x9 H;
                             PE_barrier_gradient_hessian(
-                                G, H, flag, kt2, d_hat, thickness, P, E0, E1);
+                                barrier_model, G, H, flag, kt2, d_hat, thickness, P, E0, E1);
                             make_spd(H);
                             DoubletVectorAssembler DVA{PE_Gs};
                             DVA.segment<3>(i * 3).write(PE, G);
@@ -468,7 +529,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         Vector6 G;
                         if(gradient_only)
                         {
-                            PP_barrier_gradient(G, flag, kt2, d_hat, thickness, P0, P1);
+                            PP_barrier_gradient(
+                                barrier_model, G, flag, kt2, d_hat, thickness, P0, P1);
                             DoubletVectorAssembler DVA{PP_Gs};
                             DVA.segment<2>(i * 2).write(PP, G);
                         }
@@ -476,7 +538,7 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                         {
                             Matrix6x6 H;
                             PP_barrier_gradient_hessian(
-                                G, H, flag, kt2, d_hat, thickness, P0, P1);
+                                barrier_model, G, H, flag, kt2, d_hat, thickness, P0, P1);
                             make_spd(H);
                             DoubletVectorAssembler DVA{PP_Gs};
                             DVA.segment<2>(i * 2).write(PP, G);
@@ -486,6 +548,8 @@ class IPCSimplexNormalContact final : public SimplexNormalContact
                     }
                 });
     }
+
+    SimplexBarrierModel barrier_model = SimplexBarrierModel::IPC;
 };
 
 REGISTER_SIM_SYSTEM(IPCSimplexNormalContact);

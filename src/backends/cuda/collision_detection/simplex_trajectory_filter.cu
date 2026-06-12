@@ -247,6 +247,17 @@ muda::CBufferView<Vector2i> SimplexTrajectoryFilter::PPs() const noexcept
     return m_impl.PPs;
 }
 
+void SimplexTrajectoryFilter::replace_actives(muda::CBufferView<Vector4i> PTs,
+                                              muda::CBufferView<Vector4i> EEs,
+                                              muda::CBufferView<Vector3i> PEs,
+                                              muda::CBufferView<Vector2i> PPs) noexcept
+{
+    m_impl.PTs = PTs;
+    m_impl.EEs = EEs;
+    m_impl.PEs = PEs;
+    m_impl.PPs = PPs;
+}
+
 muda::CBufferView<Vector4i> SimplexTrajectoryFilter::friction_PTs() const noexcept
 {
     return m_impl.friction_PT;

@@ -222,6 +222,66 @@ void GlobalTWP::Impl::sync_half_plane_support_set()
     has_support_contact = host_count > 0;
 }
 
+void GlobalTWP::Impl::sync_simplex_support_set()
+{
+    if(!simplex_trajectory_filter)
+        return;
+
+    const IndexT contact_count = constraints.host_contact_constraint_count();
+    support_PTs.resize(contact_count);
+    support_EEs.resize(contact_count);
+    support_PT_count = 0;
+    support_EE_count = 0;
+
+    if(contact_count > 0)
+    {
+        using namespace muda;
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(contact_count,
+                   [types = constraints.types.viewer().name("constraint_types"),
+                    vertex_ids =
+                        constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                    support_PTs = support_PTs.viewer().name("support_PTs"),
+                    support_EEs = support_EEs.viewer().name("support_EEs"),
+                    support_PT_count =
+                        support_PT_count.viewer().name("support_PT_count"),
+                    support_EE_count =
+                        support_EE_count.viewer().name("support_EE_count")] __device__(
+                       int c) mutable
+                   {
+                       TWPConstraintType type = types(c);
+                       Vector4i ids = vertex_ids(c);
+                       if(ids.x() < 0)
+                           return;
+
+                       if(type == TWPConstraintType::PointTriangle)
+                       {
+                           IndexT dst = atomic_add(support_PT_count.data(), 1);
+                           support_PTs(dst) = ids;
+                       }
+                       else if(type == TWPConstraintType::EdgeEdge)
+                       {
+                           IndexT dst = atomic_add(support_EE_count.data(), 1);
+                           support_EEs(dst) = ids;
+                       }
+                   });
+    }
+
+    IndexT host_PT_count = 0;
+    IndexT host_EE_count = 0;
+    support_PT_count.view().copy_to(&host_PT_count);
+    support_EE_count.view().copy_to(&host_EE_count);
+    support_PTs.resize(host_PT_count);
+    support_EEs.resize(host_EE_count);
+    empty_PEs.resize(0);
+    empty_PPs.resize(0);
+
+    simplex_trajectory_filter->replace_actives(
+        support_PTs.view(), support_EEs.view(), empty_PEs.view(), empty_PPs.view());
+    has_support_contact = has_support_contact || host_PT_count > 0 || host_EE_count > 0;
+}
+
 void GlobalTWP::Impl::project()
 {
     Timer timer{"TWP"};
@@ -322,6 +382,7 @@ void GlobalTWP::Impl::project()
                 "Refusing to write invalid projected positions back to the global state.");
 
     sync_half_plane_support_set();
+    sync_simplex_support_set();
 
     global_vertex_manager->overwrite_positions(context.x.view());
     if(finite_element_method)

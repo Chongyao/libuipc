@@ -45,6 +45,7 @@ class GlobalTWP final : public SimSystem
         void backward();
         void forward();
         void sync_half_plane_support_set();
+        void sync_simplex_support_set();
         Float  compute_min_clearance(muda::CBufferView<Vector3> positions,
                                       IndexT global_vertex_offset = 0);
         IndexT count_penetrated_vertices(muda::CBufferView<Vector3> positions,
@@ -79,6 +80,12 @@ class GlobalTWP final : public SimSystem
         TWPBackwardSolver backward_solver;
         muda::DeviceBuffer<Vector2i> support_PHs;
         muda::DeviceVar<IndexT>      support_PH_count;
+        muda::DeviceBuffer<Vector4i> support_PTs;
+        muda::DeviceBuffer<Vector4i> support_EEs;
+        muda::DeviceBuffer<Vector3i> empty_PEs;
+        muda::DeviceBuffer<Vector2i> empty_PPs;
+        muda::DeviceVar<IndexT>      support_PT_count;
+        muda::DeviceVar<IndexT>      support_EE_count;
         bool                         has_support_contact = false;
     };
 

@@ -329,6 +329,109 @@ void scatter_self_contact_color_groups(ColorsView    colors,
                });
 }
 
+void validate_self_contact_coloring(const std::vector<Vector4i>& vertex_ids,
+                                    const std::vector<IndexT>&   colors,
+                                    const std::vector<IndexT>&   color_offsets,
+                                    const std::vector<IndexT>&   colored_ids,
+                                    IndexT                       contact_count)
+{
+    UIPC_ASSERT(static_cast<IndexT>(vertex_ids.size()) == contact_count,
+                "TWP GPU self-contact coloring validation expected {} vertex ids, got {}.",
+                contact_count,
+                vertex_ids.size());
+    UIPC_ASSERT(static_cast<IndexT>(colors.size()) == contact_count,
+                "TWP GPU self-contact coloring validation expected {} colors, got {}.",
+                contact_count,
+                colors.size());
+    UIPC_ASSERT(!color_offsets.empty(),
+                "TWP GPU self-contact coloring produced no color offsets.");
+
+    const IndexT color_count = static_cast<IndexT>(color_offsets.size()) - 1;
+    const IndexT compact_count = color_offsets.back();
+    UIPC_ASSERT(compact_count == contact_count,
+                "TWP GPU self-contact coloring is incomplete: compacted {}, expected {}.",
+                compact_count,
+                contact_count);
+    UIPC_ASSERT(static_cast<IndexT>(colored_ids.size()) == contact_count,
+                "TWP GPU self-contact coloring expected {} compact ids, got {}.",
+                contact_count,
+                colored_ids.size());
+
+    std::vector<IndexT> seen(static_cast<SizeT>(contact_count), 0);
+    for(IndexT c = 0; c < contact_count; ++c)
+    {
+        IndexT color = colors[static_cast<SizeT>(c)];
+        UIPC_ASSERT(color >= 0 && color < color_count,
+                    "TWP GPU self-contact constraint {} has invalid color {} "
+                    "(color_count={}).",
+                    c,
+                    color,
+                    color_count);
+    }
+
+    for(IndexT color = 0; color < color_count; ++color)
+    {
+        IndexT begin = color_offsets[static_cast<SizeT>(color)];
+        IndexT end   = color_offsets[static_cast<SizeT>(color + 1)];
+        UIPC_ASSERT(begin <= end,
+                    "TWP GPU self-contact color {} has invalid range [{}, {}).",
+                    color,
+                    begin,
+                    end);
+        UIPC_ASSERT(begin >= 0 && end <= contact_count,
+                    "TWP GPU self-contact color {} range [{}, {}) is out of compact "
+                    "count {}.",
+                    color,
+                    begin,
+                    end,
+                    contact_count);
+
+        std::unordered_set<IndexT> color_vertices;
+        for(IndexT p = begin; p < end; ++p)
+        {
+            IndexT c = colored_ids[static_cast<SizeT>(p)];
+            UIPC_ASSERT(c >= 0 && c < contact_count,
+                        "TWP GPU self-contact compact slot {} has invalid constraint "
+                        "id {}.",
+                        p,
+                        c);
+            UIPC_ASSERT(colors[static_cast<SizeT>(c)] == color,
+                        "TWP GPU self-contact compact slot {} stores constraint {} "
+                        "with color {}, expected {}.",
+                        p,
+                        c,
+                        colors[static_cast<SizeT>(c)],
+                        color);
+            ++seen[static_cast<SizeT>(c)];
+
+            const Vector4i ids = vertex_ids[static_cast<SizeT>(c)];
+            for(IndexT local_i = 0; local_i < 4; ++local_i)
+            {
+                IndexT v = ids(local_i);
+                if(v < 0)
+                    continue;
+                bool inserted = color_vertices.insert(v).second;
+                UIPC_ASSERT(inserted,
+                            "TWP GPU self-contact color {} is not conflict-free: "
+                            "constraint {} shares vertex {} with another constraint "
+                            "in the same color.",
+                            color,
+                            c,
+                            v);
+            }
+        }
+    }
+
+    for(IndexT c = 0; c < contact_count; ++c)
+    {
+        UIPC_ASSERT(seen[static_cast<SizeT>(c)] == 1,
+                    "TWP GPU self-contact constraint {} appears {} times in compact "
+                    "color groups.",
+                    c,
+                    seen[static_cast<SizeT>(c)]);
+    }
+}
+
 }  // namespace
 
 struct TWPUnitMassInfo
@@ -914,6 +1017,20 @@ void TWPBackwardSolver::update_self_contact_coloring_gpu(TWPConstraintSet& const
                                       m_self_contact_color_offsets.view(),
                                       m_self_contact_color_cursors.view(),
                                       m_colored_contact_ids.view());
+
+    std::vector<IndexT> host_colors(static_cast<SizeT>(contact_count));
+    std::vector<IndexT> host_colored_ids(static_cast<SizeT>(contact_count));
+    muda::BufferLaunch()
+        .copy<IndexT>(host_colors.data(),
+                      std::as_const(m_self_contact_colors).view(0, contact_count))
+        .copy<IndexT>(host_colored_ids.data(),
+                      std::as_const(m_colored_contact_ids).view(0, contact_count))
+        .wait();
+    validate_self_contact_coloring(m_host_self_contact_vertex_ids,
+                                   host_colors,
+                                   m_host_self_contact_color_offsets,
+                                   host_colored_ids,
+                                   contact_count);
 }
 
 void TWPBackwardSolver::update_self_contact_coloring(TWPConstraintSet& constraints,
