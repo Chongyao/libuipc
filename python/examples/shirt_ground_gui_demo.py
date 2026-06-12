@@ -95,6 +95,9 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["twp"]["debug"] = int(args.twp_debug)
     config["contact"]["twp"]["edge_sigma"] = args.twp_edge_sigma
     config["contact"]["twp"]["backward_max_iter"] = args.twp_backward_max_iter
+    config["contact"]["twp"]["backward_check_convergence"] = int(
+        not args.disable_twp_backward_check
+    )
     config["contact"]["twp"]["self_collision_enable"] = int(not args.disable_twp_self_collision)
     config["line_search"]["enable"] = int(not args.disable_line_search)
     config["line_search"]["max_iter"] = args.line_search_max_iter
@@ -234,6 +237,7 @@ def parse_args():
     parser.add_argument("--twp-edge-sigma", type=float, default=1.1)
     parser.add_argument("--twp-eps", type=float, default=1.0e-4)
     parser.add_argument("--twp-backward-max-iter", type=int, default=32)
+    parser.add_argument("--disable-twp-backward-check", action="store_true")
     parser.add_argument("--disable-twp-self-collision", action="store_true")
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--line-search-max-iter", type=int, default=8)

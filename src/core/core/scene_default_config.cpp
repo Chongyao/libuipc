@@ -67,6 +67,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("contact/twp/d_max", Float{0.02});
     config.create("contact/twp/edge_sigma", Float{1.1});
     config.create("contact/twp/backward_max_iter", IndexT{32});
+    config.create("contact/twp/backward_check_convergence", IndexT{1});
     config.create("contact/twp/self_collision_enable", IndexT{1});
     config.create("contact/twp/debug", IndexT{0});
 

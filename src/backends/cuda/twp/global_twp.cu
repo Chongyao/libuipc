@@ -74,6 +74,8 @@ void GlobalTWP::do_build()
     m_impl.edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
     m_impl.backward_max_iter_attr =
         config.find<IndexT>("contact/twp/backward_max_iter");
+    m_impl.backward_check_convergence_attr =
+        config.find<IndexT>("contact/twp/backward_check_convergence");
     m_impl.self_collision_enable_attr =
         config.find<IndexT>("contact/twp/self_collision_enable");
     m_impl.debug_attr    = config.find<IndexT>("contact/twp/debug");
@@ -158,6 +160,8 @@ void GlobalTWP::Impl::backward()
     info.finite_element_method          = finite_element_method.view();
     info.finite_element_vertex_reporter = finite_element_vertex_reporter.view();
     info.max_iterations = backward_max_iter_attr ? backward_max_iter_attr->view()[0] : 32;
+    info.check_convergence = !backward_check_convergence_attr
+                             || backward_check_convergence_attr->view()[0] != 0;
     backward_solver.solve(info);
 }
 

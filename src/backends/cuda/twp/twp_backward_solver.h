@@ -22,6 +22,7 @@ class TWPBackwardSolver
         FiniteElementMethod*         finite_element_method = nullptr;
         FiniteElementVertexReporter* finite_element_vertex_reporter = nullptr;
         IndexT                       max_iterations = 32;
+        bool                         check_convergence = true;
     };
 
     void solve(SolveInfo info);

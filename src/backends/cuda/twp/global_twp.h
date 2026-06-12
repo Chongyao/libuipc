@@ -68,6 +68,7 @@ class GlobalTWP final : public SimSystem
         S<const geometry::AttributeSlot<Float>>  d_max_attr;
         S<const geometry::AttributeSlot<Float>>  edge_sigma_attr;
         S<const geometry::AttributeSlot<IndexT>> backward_max_iter_attr;
+        S<const geometry::AttributeSlot<IndexT>> backward_check_convergence_attr;
         S<const geometry::AttributeSlot<IndexT>> self_collision_enable_attr;
         S<const geometry::AttributeSlot<IndexT>> debug_attr;
 

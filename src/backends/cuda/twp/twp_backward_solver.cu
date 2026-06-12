@@ -439,7 +439,8 @@ void TWPBackwardSolver::solve(SolveInfo info)
                                       m_host_contact_color_offsets,
                                       0,
                                       mass_info);
-            compute_lcp_diagnostics(context, constraints, mass_info);
+            if(info.check_convergence)
+                compute_lcp_diagnostics(context, constraints, mass_info);
         }
         else
         {
@@ -456,8 +457,13 @@ void TWPBackwardSolver::solve(SolveInfo info)
                                       m_host_contact_color_offsets,
                                       0,
                                       mass_info);
-            compute_lcp_diagnostics(context, constraints, mass_info);
+            if(info.check_convergence)
+                compute_lcp_diagnostics(context, constraints, mass_info);
         }
+
+        context.diagnostics.backward.iterations = iter + 1;
+        if(!info.check_convergence)
+            continue;
 
         muda::DeviceReduce().Max(
             context.diagnostics.backward.backward_violations.data(),
@@ -481,7 +487,6 @@ void TWPBackwardSolver::solve(SolveInfo info)
             context.diagnostics.backward.max_lcp_complementarity;
         context.diagnostics.backward.lcp_projected_residual_inf =
             context.diagnostics.backward.max_lcp_projected_residual;
-        context.diagnostics.backward.iterations = iter + 1;
         if(context.diagnostics.backward.violation_inf < BackwardTolerance
            && context.diagnostics.backward.lcp_projected_residual_inf < BackwardTolerance)
         {
@@ -489,6 +494,19 @@ void TWPBackwardSolver::solve(SolveInfo info)
             break;
         }
         context.diagnostics.backward.converged = false;
+    }
+
+    if(!info.check_convergence)
+    {
+        context.diagnostics.backward.backward_violations.fill(0.0);
+        context.diagnostics.backward.lcp_gaps.fill(0.0);
+        context.diagnostics.backward.lcp_complementarity.fill(0.0);
+        context.diagnostics.backward.lcp_projected_residual.fill(0.0);
+        context.diagnostics.backward.converged = true;
+        context.diagnostics.backward.violation_inf = 0.0;
+        context.diagnostics.backward.lcp_min_gap = 0.0;
+        context.diagnostics.backward.lcp_complementarity_inf = 0.0;
+        context.diagnostics.backward.lcp_projected_residual_inf = 0.0;
     }
 }
 }  // namespace uipc::backend::cuda
