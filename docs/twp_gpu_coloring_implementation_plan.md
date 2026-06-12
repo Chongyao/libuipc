@@ -1,7 +1,8 @@
 # TWP GPU Coloring Implementation Plan
 
 ## Status
-- Self-contact now uses a GPU randomized coloring path in the backward solver.
+- Self-contact has a GPU randomized coloring path in the backward solver, but
+  CPU greedy coloring is the default path for stability and comparison.
 - Edge constraints still use the CPU greedy coloring cache.
 - This document remains as the implementation/validation plan for the GPU self-contact coloring path.
 

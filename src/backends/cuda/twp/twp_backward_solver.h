@@ -24,12 +24,16 @@ class TWPBackwardSolver
         FiniteElementVertexReporter* finite_element_vertex_reporter = nullptr;
         IndexT                       max_iterations = 32;
         bool                         check_convergence = true;
+        bool                         use_gpu_self_contact_coloring = false;
     };
 
     void solve(SolveInfo info);
 
   private:
-    void update_self_contact_coloring(TWPConstraintSet& constraints);
+    void update_self_contact_coloring(TWPConstraintSet& constraints,
+                                      bool              use_gpu_coloring);
+    void update_self_contact_coloring_cpu(TWPConstraintSet& constraints);
+    void update_self_contact_coloring_gpu(TWPConstraintSet& constraints);
     void update_edge_coloring_if_needed(TWPConstraintSet& constraints);
 
     muda::DeviceBuffer<IndexT> m_self_contact_colors;

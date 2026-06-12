@@ -71,6 +71,7 @@ class GlobalTWP final : public SimSystem
         S<const geometry::AttributeSlot<IndexT>> backward_max_iter_attr;
         S<const geometry::AttributeSlot<IndexT>> backward_check_convergence_attr;
         S<const geometry::AttributeSlot<IndexT>> self_collision_enable_attr;
+        S<const geometry::AttributeSlot<IndexT>> self_contact_coloring_attr;
         S<const geometry::AttributeSlot<IndexT>> debug_attr;
 
         TWPContext        context;

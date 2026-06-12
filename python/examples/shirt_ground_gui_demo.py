@@ -100,6 +100,9 @@ def build_scene(args: argparse.Namespace):
         not args.disable_twp_backward_check
     )
     config["contact"]["twp"]["self_collision_enable"] = int(not args.disable_twp_self_collision)
+    config["contact"]["twp"]["self_contact_coloring"] = int(
+        args.twp_self_contact_coloring == "gpu"
+    )
     config["line_search"]["enable"] = int(not args.disable_line_search)
     config["line_search"]["max_iter"] = args.line_search_max_iter
     config["newton"]["max_iter"] = args.newton_max_iter
@@ -242,6 +245,11 @@ def parse_args():
     parser.add_argument("--twp-backward-max-iter", type=int, default=32)
     parser.add_argument("--disable-twp-backward-check", action="store_true")
     parser.add_argument("--disable-twp-self-collision", action="store_true")
+    parser.add_argument(
+        "--twp-self-contact-coloring",
+        choices=("cpu", "gpu"),
+        default="cpu",
+    )
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--line-search-max-iter", type=int, default=8)
     parser.add_argument("--disable-line-search", action="store_true")

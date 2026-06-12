@@ -70,6 +70,7 @@ geometry::AttributeCollection default_scene_config() noexcept
     config.create("contact/twp/backward_max_iter", IndexT{32});
     config.create("contact/twp/backward_check_convergence", IndexT{1});
     config.create("contact/twp/self_collision_enable", IndexT{1});
+    config.create("contact/twp/self_contact_coloring", IndexT{0});
     config.create("contact/twp/debug", IndexT{0});
 
     // adaptive contact tuning knobs.

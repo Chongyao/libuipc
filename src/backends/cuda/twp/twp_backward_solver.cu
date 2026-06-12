@@ -703,7 +703,7 @@ void TWPBackwardSolver::update_edge_coloring_if_needed(TWPConstraintSet& constra
     m_coloring_edge_count = edge_count;
 }
 
-void TWPBackwardSolver::update_self_contact_coloring(TWPConstraintSet& constraints)
+void TWPBackwardSolver::update_self_contact_coloring_cpu(TWPConstraintSet& constraints)
 {
     const IndexT contact_count = constraints.host_self_contact_constraint_count();
     if(contact_count == 0)
@@ -715,7 +715,99 @@ void TWPBackwardSolver::update_self_contact_coloring(TWPConstraintSet& constrain
         return;
     }
 
-    Timer timer{"TWP Build Self Contact LCP Colors"};
+    Timer timer{"TWP Build Self Contact LCP Colors CPU"};
+
+    m_host_self_contact_vertex_ids.resize(contact_count);
+    muda::BufferLaunch()
+        .copy<Vector4i>(m_host_self_contact_vertex_ids.data(),
+                        std::as_const(constraints.vertex_ids)
+                            .view(constraints.host_self_contact_constraint_offset(),
+                                  contact_count))
+        .wait();
+
+    std::vector<std::vector<IndexT>>        color_constraint_ids;
+    std::vector<std::unordered_set<IndexT>> color_vertices;
+
+    for(IndexT c = 0; c < contact_count; ++c)
+    {
+        Vector4i ids = m_host_self_contact_vertex_ids[c];
+        IndexT   selected_color = -1;
+
+        for(IndexT color = 0; color < static_cast<IndexT>(color_vertices.size());
+            ++color)
+        {
+            bool conflict = false;
+            for(IndexT local_i = 0; local_i < 4; ++local_i)
+            {
+                IndexT v = ids(local_i);
+                if(v >= 0 && color_vertices[color].contains(v))
+                {
+                    conflict = true;
+                    break;
+                }
+            }
+
+            if(!conflict)
+            {
+                selected_color = color;
+                break;
+            }
+        }
+
+        if(selected_color < 0)
+        {
+            selected_color = static_cast<IndexT>(color_vertices.size());
+            color_vertices.emplace_back();
+            color_constraint_ids.emplace_back();
+        }
+
+        color_constraint_ids[selected_color].push_back(c);
+        for(IndexT local_i = 0; local_i < 4; ++local_i)
+        {
+            IndexT v = ids(local_i);
+            if(v >= 0)
+                color_vertices[selected_color].insert(v);
+        }
+    }
+
+    m_host_self_contact_color_offsets.clear();
+    m_host_self_contact_color_offsets.reserve(color_constraint_ids.size() + 1);
+    m_host_self_contact_color_offsets.push_back(0);
+
+    m_host_colored_self_contact_ids.clear();
+    m_host_colored_self_contact_ids.reserve(contact_count);
+    for(const auto& ids : color_constraint_ids)
+    {
+        m_host_colored_self_contact_ids.insert(m_host_colored_self_contact_ids.end(),
+                                               ids.begin(),
+                                               ids.end());
+        m_host_self_contact_color_offsets.push_back(
+            static_cast<IndexT>(m_host_colored_self_contact_ids.size()));
+    }
+
+    m_colored_contact_ids.resize(m_host_colored_self_contact_ids.size());
+    if(!m_host_colored_self_contact_ids.empty())
+    {
+        muda::BufferLaunch()
+            .copy<IndexT>(m_colored_contact_ids.view(),
+                          m_host_colored_self_contact_ids.data())
+            .wait();
+    }
+}
+
+void TWPBackwardSolver::update_self_contact_coloring_gpu(TWPConstraintSet& constraints)
+{
+    const IndexT contact_count = constraints.host_self_contact_constraint_count();
+    if(contact_count == 0)
+    {
+        m_host_colored_self_contact_ids.clear();
+        m_host_self_contact_color_offsets.clear();
+        m_host_self_contact_color_offsets.push_back(0);
+        m_colored_contact_ids.resize(0);
+        return;
+    }
+
+    Timer timer{"TWP Build Self Contact LCP Colors GPU"};
     const IndexT constraint_offset = constraints.host_self_contact_constraint_offset();
     m_host_self_contact_vertex_ids.resize(contact_count);
     muda::BufferLaunch()
@@ -824,6 +916,15 @@ void TWPBackwardSolver::update_self_contact_coloring(TWPConstraintSet& constrain
                                       m_colored_contact_ids.view());
 }
 
+void TWPBackwardSolver::update_self_contact_coloring(TWPConstraintSet& constraints,
+                                                     bool              use_gpu_coloring)
+{
+    if(use_gpu_coloring)
+        update_self_contact_coloring_gpu(constraints);
+    else
+        update_self_contact_coloring_cpu(constraints);
+}
+
 void TWPBackwardSolver::solve(SolveInfo info)
 {
     Timer timer{"TWP Backward"};
@@ -848,7 +949,7 @@ void TWPBackwardSolver::solve(SolveInfo info)
     }
 
     update_edge_coloring_if_needed(constraints);
-    update_self_contact_coloring(constraints);
+    update_self_contact_coloring(constraints, info.use_gpu_self_contact_coloring);
 
     bool use_fem_mass = info.finite_element_method && info.finite_element_vertex_reporter;
     const IndexT max_iterations = info.max_iterations > 0 ? info.max_iterations : 1;
