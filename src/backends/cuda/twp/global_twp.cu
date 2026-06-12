@@ -227,46 +227,61 @@ void GlobalTWP::Impl::sync_simplex_support_set()
     if(!simplex_trajectory_filter)
         return;
 
-    const IndexT contact_count = constraints.host_contact_constraint_count();
-    support_PTs.resize(contact_count);
-    support_EEs.resize(contact_count);
+    const bool self_collision_enabled =
+        !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
+    const IndexT self_contact_count = constraints.host_self_contact_constraint_count();
+    if(!self_collision_enabled || self_contact_count == 0)
+    {
+        support_PTs.resize(0);
+        support_EEs.resize(0);
+        empty_PEs.resize(0);
+        empty_PPs.resize(0);
+        simplex_trajectory_filter->replace_actives(support_PTs.view(),
+                                                   support_EEs.view(),
+                                                   empty_PEs.view(),
+                                                   empty_PPs.view());
+        return;
+    }
+
+    support_PTs.resize(self_contact_count);
+    support_EEs.resize(self_contact_count);
     support_PT_count = 0;
     support_EE_count = 0;
 
-    if(contact_count > 0)
-    {
-        using namespace muda;
-        ParallelFor()
-            .file_line(__FILE__, __LINE__)
-            .apply(contact_count,
-                   [types = constraints.types.viewer().name("constraint_types"),
-                    vertex_ids =
-                        constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
-                    support_PTs = support_PTs.viewer().name("support_PTs"),
-                    support_EEs = support_EEs.viewer().name("support_EEs"),
-                    support_PT_count =
-                        support_PT_count.viewer().name("support_PT_count"),
-                    support_EE_count =
-                        support_EE_count.viewer().name("support_EE_count")] __device__(
-                       int c) mutable
-                   {
-                       TWPConstraintType type = types(c);
-                       Vector4i ids = vertex_ids(c);
-                       if(ids.x() < 0)
-                           return;
+    const IndexT constraint_offset = constraints.host_self_contact_constraint_offset();
+    using namespace muda;
+    ParallelFor()
+        .file_line(__FILE__, __LINE__)
+        .apply(self_contact_count,
+               [constraint_offset,
+                types = constraints.types.viewer().name("constraint_types"),
+                vertex_ids =
+                    constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                support_PTs = support_PTs.viewer().name("support_PTs"),
+                support_EEs = support_EEs.viewer().name("support_EEs"),
+                support_PT_count =
+                    support_PT_count.viewer().name("support_PT_count"),
+                support_EE_count =
+                    support_EE_count.viewer().name("support_EE_count")] __device__(
+                   int local_c) mutable
+               {
+                   IndexT c = constraint_offset + local_c;
+                   TWPConstraintType type = types(c);
+                   Vector4i ids = vertex_ids(c);
+                   if(ids.x() < 0)
+                       return;
 
-                       if(type == TWPConstraintType::PointTriangle)
-                       {
-                           IndexT dst = atomic_add(support_PT_count.data(), 1);
-                           support_PTs(dst) = ids;
-                       }
-                       else if(type == TWPConstraintType::EdgeEdge)
-                       {
-                           IndexT dst = atomic_add(support_EE_count.data(), 1);
-                           support_EEs(dst) = ids;
-                       }
-                   });
-    }
+                   if(type == TWPConstraintType::PointTriangle)
+                   {
+                       IndexT dst = atomic_add(support_PT_count.data(), 1);
+                       support_PTs(dst) = ids;
+                   }
+                   else if(type == TWPConstraintType::EdgeEdge)
+                   {
+                       IndexT dst = atomic_add(support_EE_count.data(), 1);
+                       support_EEs(dst) = ids;
+                   }
+               });
 
     IndexT host_PT_count = 0;
     IndexT host_EE_count = 0;

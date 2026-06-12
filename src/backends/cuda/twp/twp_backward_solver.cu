@@ -1154,10 +1154,6 @@ void TWPBackwardSolver::solve(SolveInfo info)
 
     if(!info.check_convergence)
     {
-        context.diagnostics.backward.backward_violations.fill(0.0);
-        context.diagnostics.backward.lcp_gaps.fill(0.0);
-        context.diagnostics.backward.lcp_complementarity.fill(0.0);
-        context.diagnostics.backward.lcp_projected_residual.fill(0.0);
         context.diagnostics.backward.converged = true;
         context.diagnostics.backward.violation_inf = 0.0;
         context.diagnostics.backward.lcp_min_gap = 0.0;
