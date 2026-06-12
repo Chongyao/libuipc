@@ -72,6 +72,8 @@ void GlobalTWP::do_build()
     m_impl.d_min_attr    = config.find<Float>("contact/twp/d_min");
     m_impl.d_max_attr    = config.find<Float>("contact/twp/d_max");
     m_impl.edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
+    m_impl.repulsion_stiffness_attr =
+        config.find<Float>("contact/twp/repulsion_stiffness");
     m_impl.backward_max_iter_attr =
         config.find<IndexT>("contact/twp/backward_max_iter");
     m_impl.backward_check_convergence_attr =
@@ -113,6 +115,11 @@ void GlobalTWP::Impl::ensure_storage(SizeT vertex_count)
 Float GlobalTWP::Impl::compute_full_step_toi()
 {
     constexpr Float ClearanceTolerance = 1e-12;
+    const Float repulsion_stiffness =
+        repulsion_stiffness_attr ? repulsion_stiffness_attr->view()[0] : Float{1e9};
+    if(has_support_contact && repulsion_stiffness > 0.0)
+        return 0.0;
+
     if(half_plane && half_plane_vertex_reporter
        && half_plane->positions().size() > 0)
     {
@@ -149,6 +156,7 @@ void GlobalTWP::Impl::reset_algorithm_state()
 {
     context.reset(*global_vertex_manager.view());
     constraints.clear();
+    has_support_contact = false;
 }
 
 void GlobalTWP::Impl::backward()
@@ -207,6 +215,7 @@ void GlobalTWP::Impl::sync_half_plane_support_set()
     support_PH_count.view().copy_to(&host_count);
     support_PHs.resize(host_count);
     vertex_half_plane_trajectory_filter->replace_PHs(support_PHs.view());
+    has_support_contact = host_count > 0;
 }
 
 void GlobalTWP::Impl::project()

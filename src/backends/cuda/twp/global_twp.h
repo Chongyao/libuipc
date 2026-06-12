@@ -67,6 +67,7 @@ class GlobalTWP final : public SimSystem
         S<const geometry::AttributeSlot<Float>>  d_min_attr;
         S<const geometry::AttributeSlot<Float>>  d_max_attr;
         S<const geometry::AttributeSlot<Float>>  edge_sigma_attr;
+        S<const geometry::AttributeSlot<Float>>  repulsion_stiffness_attr;
         S<const geometry::AttributeSlot<IndexT>> backward_max_iter_attr;
         S<const geometry::AttributeSlot<IndexT>> backward_check_convergence_attr;
         S<const geometry::AttributeSlot<IndexT>> self_collision_enable_attr;
@@ -77,6 +78,7 @@ class GlobalTWP final : public SimSystem
         TWPBackwardSolver backward_solver;
         muda::DeviceBuffer<Vector2i> support_PHs;
         muda::DeviceVar<IndexT>      support_PH_count;
+        bool                         has_support_contact = false;
     };
 
   private:

@@ -94,6 +94,7 @@ def build_scene(args: argparse.Namespace):
     config["contact"]["twp"]["eps"] = args.twp_eps
     config["contact"]["twp"]["debug"] = int(args.twp_debug)
     config["contact"]["twp"]["edge_sigma"] = args.twp_edge_sigma
+    config["contact"]["twp"]["repulsion_stiffness"] = args.twp_repulsion_stiffness
     config["contact"]["twp"]["backward_max_iter"] = args.twp_backward_max_iter
     config["contact"]["twp"]["backward_check_convergence"] = int(
         not args.disable_twp_backward_check
@@ -108,7 +109,8 @@ def build_scene(args: argparse.Namespace):
     config["linear_system"]["block_diagonal_scaling"]["enable"] = int(args.block_diagonal_scaling)
 
     scene = Scene(config)
-    scene.contact_tabular().default_model(0.0, 1.0e9)
+    contact_resistance = args.twp_repulsion_stiffness if args.contact == "twp" else 1.0e9
+    scene.contact_tabular().default_model(0.0, contact_resistance)
     default_contact = scene.contact_tabular().default_element()
 
     shirt_path = pathlib.Path(args.shirt).resolve()
@@ -235,6 +237,7 @@ def parse_args():
         help="limit TWP outer iterations; omitted means run until convergence with a large safety cap",
     )
     parser.add_argument("--twp-edge-sigma", type=float, default=1.1)
+    parser.add_argument("--twp-repulsion-stiffness", type=float, default=1.0e9)
     parser.add_argument("--twp-eps", type=float, default=1.0e-4)
     parser.add_argument("--twp-backward-max-iter", type=int, default=32)
     parser.add_argument("--disable-twp-backward-check", action="store_true")
