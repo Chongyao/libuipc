@@ -137,17 +137,22 @@ struct TWPConstraintSet
 
     void resize(SizeT capacity);
     void clear();
-    void set_host_contact_constraint_count(IndexT contact_count);
+    void set_host_contact_constraint_count(IndexT obstacle_count, IndexT self_contact_count);
     void set_host_edge_constraint_count(IndexT edge_count);
 
     IndexT host_total_constraint_count() const;
     IndexT host_contact_constraint_count() const;
+    IndexT host_obstacle_constraint_count() const;
+    IndexT host_self_contact_constraint_count() const;
+    IndexT host_self_contact_constraint_offset() const;
     IndexT host_edge_constraint_count() const;
     IndexT host_edge_constraint_offset() const;
 
   private:
-    IndexT m_host_total_count   = 0;
-    IndexT m_host_contact_count = 0;
-    IndexT m_host_edge_count    = 0;
+    IndexT m_host_total_count        = 0;
+    IndexT m_host_contact_count      = 0;
+    IndexT m_host_obstacle_count     = 0;
+    IndexT m_host_self_contact_count = 0;
+    IndexT m_host_edge_count         = 0;
 };
 }  // namespace uipc::backend::cuda

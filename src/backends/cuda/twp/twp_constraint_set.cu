@@ -18,15 +18,20 @@ void TWPConstraintSet::clear()
     count                = 0;
     m_host_total_count   = 0;
     m_host_contact_count = 0;
+    m_host_obstacle_count = 0;
+    m_host_self_contact_count = 0;
     m_host_edge_count    = 0;
 }
 
-void TWPConstraintSet::set_host_contact_constraint_count(IndexT contact_count)
+void TWPConstraintSet::set_host_contact_constraint_count(IndexT obstacle_count,
+                                                         IndexT self_contact_count)
 {
-    m_host_contact_count = contact_count;
-    m_host_edge_count    = 0;
-    m_host_total_count   = contact_count;
-    count                = contact_count;
+    m_host_obstacle_count     = obstacle_count;
+    m_host_self_contact_count = self_contact_count;
+    m_host_contact_count      = obstacle_count + self_contact_count;
+    m_host_edge_count         = 0;
+    m_host_total_count        = m_host_contact_count;
+    count                    = m_host_contact_count;
 }
 
 void TWPConstraintSet::set_host_edge_constraint_count(IndexT edge_count)
@@ -44,6 +49,21 @@ IndexT TWPConstraintSet::host_total_constraint_count() const
 IndexT TWPConstraintSet::host_contact_constraint_count() const
 {
     return m_host_contact_count;
+}
+
+IndexT TWPConstraintSet::host_obstacle_constraint_count() const
+{
+    return m_host_obstacle_count;
+}
+
+IndexT TWPConstraintSet::host_self_contact_constraint_count() const
+{
+    return m_host_self_contact_count;
+}
+
+IndexT TWPConstraintSet::host_self_contact_constraint_offset() const
+{
+    return m_host_obstacle_count;
 }
 
 IndexT TWPConstraintSet::host_edge_constraint_count() const

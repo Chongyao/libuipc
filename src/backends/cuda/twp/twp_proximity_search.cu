@@ -127,8 +127,11 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                    });
     }
 
+    IndexT obstacle_count = constraints.count;
     if(self_collision_enabled)
         append_simplex_contact_constraints(search_bound);
-    constraints.set_host_contact_constraint_count(constraints.count);
+    IndexT contact_count = constraints.count;
+    constraints.set_host_contact_constraint_count(obstacle_count,
+                                                  contact_count - obstacle_count);
 }
 }  // namespace uipc::backend::cuda
