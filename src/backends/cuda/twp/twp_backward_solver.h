@@ -28,11 +28,13 @@ class TWPBackwardSolver
     void solve(SolveInfo info);
 
   private:
+    void update_self_contact_coloring(TWPConstraintSet& constraints);
     void update_edge_coloring_if_needed(TWPConstraintSet& constraints);
 
-    muda::DeviceBuffer<IndexT> m_self_contact_colors;
-    muda::DeviceBuffer<IndexT> m_self_contact_color_vertex_owners;
-    IndexT                     m_host_self_contact_color_count = 0;
+    muda::DeviceBuffer<IndexT> m_colored_contact_ids;
+    std::vector<IndexT>        m_host_colored_self_contact_ids;
+    std::vector<IndexT>        m_host_self_contact_color_offsets;
+    std::vector<Vector4i>      m_host_self_contact_vertex_ids;
 
     muda::DeviceBuffer<IndexT> m_colored_edge_ids;
     std::vector<IndexT>        m_host_colored_edge_ids;

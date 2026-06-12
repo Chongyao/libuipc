@@ -19,7 +19,6 @@ namespace
 {
 constexpr Float  BackwardTolerance     = 1e-8;
 constexpr Float  LCPRelaxation         = 1.0;
-constexpr IndexT MaxSelfContactColors  = 128;
 }  // namespace
 
 struct TWPUnitMassInfo
@@ -372,105 +371,6 @@ void solve_uncolored_constraints_jacobi(TWPContext&               context,
                });
 }
 
-template <typename VertexIdsView>
-static void color_self_contact_candidates(VertexIdsView          vertex_ids,
-                                          IndexT                 constraint_offset,
-                                          IndexT                 contact_count,
-                                          IndexT                 color,
-                                          muda::BufferView<IndexT>  colors,
-                                          muda::BufferView<IndexT>  vertex_owners)
-{
-    using namespace muda;
-    ParallelFor()
-        .file_line(__FILE__, __LINE__)
-        .apply(contact_count,
-               [colors = colors.viewer().name("colors"),
-                owners = vertex_owners.viewer().name("owners"),
-                vertex_ids = vertex_ids.viewer().name("vertex_ids"),
-                constraint_offset,
-                color] __device__(int local_c) mutable
-               {
-                   if(colors(local_c) >= 0)
-                       return;
-
-                   Vector4i ids = vertex_ids(constraint_offset + local_c);
-                   bool claimed[4] = {false, false, false, false};
-                   bool success = true;
-
-                   for(IndexT local_i = 0; local_i < 4; ++local_i)
-                   {
-                       IndexT v = ids(local_i);
-                       if(v < 0)
-                           continue;
-
-                       IndexT previous = muda::atomic_cas(owners.data() + v,
-                                                           IndexT{-1},
-                                                           local_c);
-                       if(previous == -1 || previous == local_c)
-                           claimed[local_i] = true;
-                       else
-                       {
-                           success = false;
-                           break;
-                       }
-                   }
-
-                   if(success)
-                   {
-                       colors(local_c) = color;
-                       return;
-                   }
-
-                   for(IndexT local_i = 0; local_i < 4; ++local_i)
-                   {
-                       if(!claimed[local_i])
-                           continue;
-
-                       IndexT v = ids(local_i);
-                       if(v >= 0)
-                           muda::atomic_cas(owners.data() + v, local_c, IndexT{-1});
-                   }
-               });
-}
-
-static void build_self_contact_coloring(TWPConstraintSet&                 constraints,
-                                        SizeT                             vertex_count,
-                                        muda::DeviceBuffer<IndexT>&       self_contact_colors,
-                                        muda::DeviceBuffer<IndexT>&       self_contact_color_vertex_owners,
-                                        IndexT&                          host_self_contact_color_count)
-{
-    const IndexT contact_count = constraints.host_self_contact_constraint_count();
-    if(contact_count == 0)
-    {
-        self_contact_colors.resize(0);
-        host_self_contact_color_count = 0;
-        return;
-    }
-
-    Timer timer{"TWP Build Self Contact LCP Colors"};
-
-    self_contact_colors.resize(contact_count);
-    self_contact_color_vertex_owners.resize(vertex_count);
-    self_contact_colors.fill(-1);
-
-    const IndexT constraint_offset = constraints.host_self_contact_constraint_offset();
-
-    for(IndexT color = 0; color < MaxSelfContactColors; ++color)
-    {
-        self_contact_color_vertex_owners.fill(-1);
-        color_self_contact_candidates(constraints.vertex_ids.view(),
-                                      constraint_offset,
-                                      contact_count,
-                                      color,
-                                      self_contact_colors.view(),
-                                      self_contact_color_vertex_owners.view());
-    }
-
-    IndexT max_color = -1;
-    muda::DeviceReduce().Max(self_contact_colors.data(), &max_color, contact_count);
-    host_self_contact_color_count = max_color >= 0 ? max_color + 1 : 0;
-}
-
 template <typename MassInfo>
 void compute_lcp_diagnostics(TWPContext&        context,
                              TWPConstraintSet& constraints,
@@ -629,6 +529,98 @@ void TWPBackwardSolver::update_edge_coloring_if_needed(TWPConstraintSet& constra
     m_coloring_edge_count = edge_count;
 }
 
+void TWPBackwardSolver::update_self_contact_coloring(TWPConstraintSet& constraints)
+{
+    const IndexT contact_count = constraints.host_self_contact_constraint_count();
+    if(contact_count == 0)
+    {
+        m_host_colored_self_contact_ids.clear();
+        m_host_self_contact_color_offsets.clear();
+        m_host_self_contact_color_offsets.push_back(0);
+        m_colored_contact_ids.resize(0);
+        return;
+    }
+
+    Timer timer{"TWP Build Self Contact LCP Colors"};
+
+    m_host_self_contact_vertex_ids.resize(contact_count);
+    muda::BufferLaunch()
+        .copy<Vector4i>(m_host_self_contact_vertex_ids.data(),
+                        std::as_const(constraints.vertex_ids)
+                            .view(constraints.host_self_contact_constraint_offset(),
+                                  contact_count))
+        .wait();
+
+    std::vector<std::vector<IndexT>>        color_constraint_ids;
+    std::vector<std::unordered_set<IndexT>> color_vertices;
+
+    for(IndexT c = 0; c < contact_count; ++c)
+    {
+        Vector4i ids = m_host_self_contact_vertex_ids[c];
+        IndexT   selected_color = -1;
+
+        for(IndexT color = 0; color < static_cast<IndexT>(color_vertices.size());
+            ++color)
+        {
+            bool conflict = false;
+            for(IndexT local_i = 0; local_i < 4; ++local_i)
+            {
+                IndexT v = ids(local_i);
+                if(v >= 0 && color_vertices[color].contains(v))
+                {
+                    conflict = true;
+                    break;
+                }
+            }
+
+            if(!conflict)
+            {
+                selected_color = color;
+                break;
+            }
+        }
+
+        if(selected_color < 0)
+        {
+            selected_color = static_cast<IndexT>(color_vertices.size());
+            color_vertices.emplace_back();
+            color_constraint_ids.emplace_back();
+        }
+
+        color_constraint_ids[selected_color].push_back(c);
+        for(IndexT local_i = 0; local_i < 4; ++local_i)
+        {
+            IndexT v = ids(local_i);
+            if(v >= 0)
+                color_vertices[selected_color].insert(v);
+        }
+    }
+
+    m_host_self_contact_color_offsets.clear();
+    m_host_self_contact_color_offsets.reserve(color_constraint_ids.size() + 1);
+    m_host_self_contact_color_offsets.push_back(0);
+
+    m_host_colored_self_contact_ids.clear();
+    m_host_colored_self_contact_ids.reserve(contact_count);
+    for(const auto& ids : color_constraint_ids)
+    {
+        m_host_colored_self_contact_ids.insert(m_host_colored_self_contact_ids.end(),
+                                               ids.begin(),
+                                               ids.end());
+        m_host_self_contact_color_offsets.push_back(
+            static_cast<IndexT>(m_host_colored_self_contact_ids.size()));
+    }
+
+    m_colored_contact_ids.resize(m_host_colored_self_contact_ids.size());
+    if(!m_host_colored_self_contact_ids.empty())
+    {
+        muda::BufferLaunch()
+            .copy<IndexT>(m_colored_contact_ids.view(),
+                          m_host_colored_self_contact_ids.data())
+            .wait();
+    }
+}
+
 void TWPBackwardSolver::solve(SolveInfo info)
 {
     Timer timer{"TWP Backward"};
@@ -653,11 +645,7 @@ void TWPBackwardSolver::solve(SolveInfo info)
     }
 
     update_edge_coloring_if_needed(constraints);
-    build_self_contact_coloring(constraints,
-                                context.y.size(),
-                                m_self_contact_colors,
-                                m_self_contact_color_vertex_owners,
-                                m_host_self_contact_color_count);
+    update_self_contact_coloring(constraints);
 
     bool use_fem_mass = info.finite_element_method && info.finite_element_vertex_reporter;
     const IndexT max_iterations = info.max_iterations > 0 ? info.max_iterations : 1;
@@ -678,24 +666,12 @@ void TWPBackwardSolver::solve(SolveInfo info)
                                       mass_info);
             solve_obstacle_constraints_jacobi(
                 context, constraints, 0, constraints.host_obstacle_constraint_count(), mass_info);
-            solve_constraints_with_device_colors(
-                context,
-                constraints,
-                std::as_const(m_self_contact_colors).view(),
-                m_host_self_contact_color_count,
-                constraints.host_self_contact_constraint_offset(),
-                constraints.host_self_contact_constraint_count(),
-                mass_info);
-            if(m_host_self_contact_color_count >= MaxSelfContactColors)
-            {
-                solve_uncolored_constraints_jacobi(
-                    context,
-                    constraints,
-                    std::as_const(m_self_contact_colors).view(),
-                    constraints.host_self_contact_constraint_offset(),
-                    constraints.host_self_contact_constraint_count(),
-                    mass_info);
-            }
+            solve_constraints_colored(context,
+                                      constraints,
+                                      std::as_const(m_colored_contact_ids).view(),
+                                      m_host_self_contact_color_offsets,
+                                      constraints.host_self_contact_constraint_offset(),
+                                      mass_info);
             if(info.check_convergence)
                 compute_lcp_diagnostics(context, constraints, mass_info);
         }
@@ -710,24 +686,12 @@ void TWPBackwardSolver::solve(SolveInfo info)
                                       mass_info);
             solve_obstacle_constraints_jacobi(
                 context, constraints, 0, constraints.host_obstacle_constraint_count(), mass_info);
-            solve_constraints_with_device_colors(
-                context,
-                constraints,
-                std::as_const(m_self_contact_colors).view(),
-                m_host_self_contact_color_count,
-                constraints.host_self_contact_constraint_offset(),
-                constraints.host_self_contact_constraint_count(),
-                mass_info);
-            if(m_host_self_contact_color_count >= MaxSelfContactColors)
-            {
-                solve_uncolored_constraints_jacobi(
-                    context,
-                    constraints,
-                    std::as_const(m_self_contact_colors).view(),
-                    constraints.host_self_contact_constraint_offset(),
-                    constraints.host_self_contact_constraint_count(),
-                    mass_info);
-            }
+            solve_constraints_colored(context,
+                                      constraints,
+                                      std::as_const(m_colored_contact_ids).view(),
+                                      m_host_self_contact_color_offsets,
+                                      constraints.host_self_contact_constraint_offset(),
+                                      mass_info);
             if(info.check_convergence)
                 compute_lcp_diagnostics(context, constraints, mass_info);
         }
