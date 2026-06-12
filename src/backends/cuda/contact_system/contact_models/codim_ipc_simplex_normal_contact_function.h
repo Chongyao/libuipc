@@ -15,7 +15,12 @@ namespace sym::codim_ipc_simplex_contact
 {
     inline __device__ Float quadratic_target_distance(Float thickness, Float d_hat)
     {
-        return thickness > d_hat ? thickness : d_hat;
+        // Match TWP simplex projection's active boundary exactly:
+        // twp_simplex_constraints uses min_distance = thickness + d_hat.
+        // Keeping the Newton repulsion target identical avoids a dead band where
+        // TWP projects pairs to thickness + d_hat but the recovery energy is
+        // already inactive at max(thickness, d_hat).
+        return thickness + d_hat;
     }
 
     inline __device__ Float regularized_distance(Float D, Float target)
@@ -135,7 +140,7 @@ namespace sym::codim_ipc_simplex_contact
         point_triangle_distance2(flag, P, T0, T1, T2, D);
 
         // Use a linear-distance gap so kappa has the same stiffness meaning as
-        // PH quadratic contact. d_hat keeps zero-thickness simplex contacts active.
+        // PH quadratic contact. The target equals TWP's simplex min_distance.
         Float target = quadratic_target_distance(thickness, d_hat);
         Float gap = regularized_distance(D, target) - target;
         if(gap >= 0.0)
@@ -426,7 +431,7 @@ namespace sym::codim_ipc_simplex_contact
         edge_edge_distance2(flag, Ea0, Ea1, Eb0, Eb1, D);
 
         // Use a linear-distance gap so kappa has the same stiffness meaning as
-        // PH quadratic contact. d_hat keeps zero-thickness simplex contacts active.
+        // PH quadratic contact. The target equals TWP's simplex min_distance.
         Float target = quadratic_target_distance(thickness, d_hat);
         Float gap = regularized_distance(D, target) - target;
         if(gap >= 0.0)

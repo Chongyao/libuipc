@@ -250,12 +250,22 @@ muda::CBufferView<Vector2i> SimplexTrajectoryFilter::PPs() const noexcept
 void SimplexTrajectoryFilter::replace_actives(muda::CBufferView<Vector4i> PTs,
                                               muda::CBufferView<Vector4i> EEs,
                                               muda::CBufferView<Vector3i> PEs,
-                                              muda::CBufferView<Vector2i> PPs) noexcept
+                                              muda::CBufferView<Vector2i> PPs)
 {
-    m_impl.PTs = PTs;
-    m_impl.EEs = EEs;
-    m_impl.PEs = PEs;
-    m_impl.PPs = PPs;
+    m_impl.loose_resize(m_impl.recovered_PT, PTs.size());
+    m_impl.loose_resize(m_impl.recovered_EE, EEs.size());
+    m_impl.loose_resize(m_impl.recovered_PE, PEs.size());
+    m_impl.loose_resize(m_impl.recovered_PP, PPs.size());
+
+    m_impl.recovered_PT.view().copy_from(PTs);
+    m_impl.recovered_EE.view().copy_from(EEs);
+    m_impl.recovered_PE.view().copy_from(PEs);
+    m_impl.recovered_PP.view().copy_from(PPs);
+
+    m_impl.PTs = m_impl.recovered_PT.view();
+    m_impl.EEs = m_impl.recovered_EE.view();
+    m_impl.PEs = m_impl.recovered_PE.view();
+    m_impl.PPs = m_impl.recovered_PP.view();
 }
 
 muda::CBufferView<Vector4i> SimplexTrajectoryFilter::friction_PTs() const noexcept
