@@ -6,6 +6,7 @@ void TWPConstraintSet::resize(SizeT capacity)
 {
     types.resize(capacity);
     vertex_ids.resize(capacity);
+    primitive_ids.resize(capacity);
     weights.resize(capacity);
     normals.resize(capacity);
     offsets.resize(capacity);

@@ -60,6 +60,8 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                     types = constraints.types.viewer().name("constraint_types"),
                     vertex_ids =
                         constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                    primitive_ids = constraints.primitive_ids.viewer().name(
+                        "constraint_primitive_ids"),
                     weights = constraints.weights.viewer().name("constraint_weights"),
                     normals = constraints.normals.viewer().name("constraint_normals"),
                     offsets = constraints.offsets.viewer().name("constraint_offsets"),
@@ -110,6 +112,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                                IndexT I = atomic_add(count.data(), 1);
                                write_vertex_half_plane_constraint(types,
                                                                   vertex_ids,
+                                                                  primitive_ids,
                                                                   weights,
                                                                   normals,
                                                                   offsets,

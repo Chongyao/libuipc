@@ -50,6 +50,15 @@ bool has_duplicate_valid_vertex(const Vector4i& vertices)
     return false;
 }
 
+Vector4i display_vertices(TWPConstraintType type,
+                          const Vector4i&   vertex_ids,
+                          const Vector4i&   primitive_ids)
+{
+    if(type == TWPConstraintType::VertexHalfPlane)
+        return Vector4i{vertex_ids.x(), primitive_ids.x(), -1, -1};
+    return vertex_ids;
+}
+
 struct TWPHostDebugSummary
 {
     std::array<IndexT, 4> type_counts = {0, 0, 0, 0};
@@ -106,6 +115,7 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
     {
         std::vector<TWPConstraintType> types(constraint_count);
         std::vector<Vector4i>          vertex_ids(constraint_count);
+        std::vector<Vector4i>          primitive_ids(constraint_count);
         std::vector<Float>             offsets(constraint_count);
         std::vector<Float>             lambdas(constraint_count);
         std::vector<Float>             violations(constraint_count);
@@ -117,6 +127,9 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
                                          .view(0, constraint_count))
             .copy<Vector4i>(vertex_ids.data(),
                             std::as_const(constraints.vertex_ids)
+                                .view(0, constraint_count))
+            .copy<Vector4i>(primitive_ids.data(),
+                            std::as_const(constraints.primitive_ids)
                                 .view(0, constraint_count))
             .copy<Float>(offsets.data(),
                          std::as_const(constraints.offsets).view(0, constraint_count))
@@ -145,7 +158,8 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
             {
                 summary.worst_violation_constraint = c;
                 summary.worst_violation_type       = types[c];
-                summary.worst_violation_vertices   = vertex_ids[c];
+                summary.worst_violation_vertices =
+                    display_vertices(types[c], vertex_ids[c], primitive_ids[c]);
                 summary.worst_violation            = violations[c];
                 summary.worst_violation_gap        = gaps[c];
                 summary.worst_violation_lambda     = lambdas[c];
@@ -156,7 +170,8 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
             {
                 summary.min_gap_constraint = c;
                 summary.min_gap_type       = types[c];
-                summary.min_gap_vertices   = vertex_ids[c];
+                summary.min_gap_vertices =
+                    display_vertices(types[c], vertex_ids[c], primitive_ids[c]);
                 summary.min_gap            = gaps[c];
                 summary.min_gap_lambda     = lambdas[c];
             }
@@ -256,15 +271,19 @@ TWPHostDebugSummary collect_host_debug_summary(TWPContext&        context,
 
         TWPConstraintType host_type;
         Vector4i          host_vertices;
+        Vector4i          host_primitives;
         muda::BufferLaunch()
             .copy<TWPConstraintType>(&host_type,
                                      std::as_const(constraints.types).view(constraint, 1))
             .copy<Vector4i>(&host_vertices,
                             std::as_const(constraints.vertex_ids)
                                 .view(constraint, 1))
+            .copy<Vector4i>(&host_primitives,
+                            std::as_const(constraints.primitive_ids)
+                                .view(constraint, 1))
             .wait();
         type     = host_type;
-        vertices = host_vertices;
+        vertices = display_vertices(host_type, host_vertices, host_primitives);
     };
 
     fill_constraint_metadata(summary.min_proximity_constraint,

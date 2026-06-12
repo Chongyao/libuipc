@@ -179,6 +179,8 @@ void GlobalTWP::Impl::sync_half_plane_support_set()
                    [types = constraints.types.viewer().name("constraint_types"),
                     vertex_ids =
                         constraints.vertex_ids.viewer().name("constraint_vertex_ids"),
+                    primitive_ids = constraints.primitive_ids.viewer().name(
+                        "constraint_primitive_ids"),
                     support_PHs = support_PHs.viewer().name("support_PHs"),
                     support_PH_count =
                         support_PH_count.viewer().name("support_PH_count")] __device__(
@@ -188,11 +190,12 @@ void GlobalTWP::Impl::sync_half_plane_support_set()
                            return;
 
                        Vector4i ids = vertex_ids(c);
-                       if(ids.x() < 0 || ids.y() < 0)
+                       Vector4i primitives = primitive_ids(c);
+                       if(ids.x() < 0 || primitives.x() < 0)
                            return;
 
                        IndexT dst = atomic_add(support_PH_count.data(), 1);
-                       support_PHs(dst) = Vector2i{ids.x(), ids.y()};
+                       support_PHs(dst) = Vector2i{ids.x(), primitives.x()};
                    });
     }
 

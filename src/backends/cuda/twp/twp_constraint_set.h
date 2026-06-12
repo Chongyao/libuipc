@@ -15,12 +15,14 @@ enum class TWPConstraintType : IndexT
 
 template <typename TypeView,
           typename VertexIdView,
+          typename PrimitiveIdView,
           typename WeightView,
           typename NormalView,
           typename OffsetView,
           typename GradientView>
 MUDA_GENERIC void write_vertex_half_plane_constraint(TypeView&       types,
                                                      VertexIdView&   vertex_ids,
+                                                     PrimitiveIdView& primitive_ids,
                                                      WeightView&     weights,
                                                      NormalView&     normals,
                                                      OffsetView&     offsets,
@@ -32,7 +34,11 @@ MUDA_GENERIC void write_vertex_half_plane_constraint(TypeView&       types,
                                                      Float           offset)
 {
     types(constraint_id)      = TWPConstraintType::VertexHalfPlane;
-    vertex_ids(constraint_id) = Vector4i{vertex_id, half_plane_id, -1, -1};
+    // vertex_ids contains only LCP solve variables. The half-plane id is metadata;
+    // keeping it out of vertex_ids prevents coloring from serializing all PH
+    // constraints against the same plane id.
+    vertex_ids(constraint_id) = Vector4i{vertex_id, -1, -1, -1};
+    primitive_ids(constraint_id) = Vector4i{half_plane_id, -1, -1, -1};
     weights(constraint_id)    = Vector4{1.0, 0.0, 0.0, 0.0};
     normals(constraint_id)    = normal;
     offsets(constraint_id)    = offset;
@@ -122,6 +128,7 @@ struct TWPConstraintSet
 {
     muda::DeviceBuffer<TWPConstraintType> types;
     muda::DeviceBuffer<Vector4i>          vertex_ids;
+    muda::DeviceBuffer<Vector4i>          primitive_ids;
     muda::DeviceBuffer<Vector4>           weights;
     muda::DeviceBuffer<Vector3>           normals;
     muda::DeviceBuffer<Float>             offsets;
