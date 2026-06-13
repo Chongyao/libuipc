@@ -61,7 +61,37 @@ void GlobalTWP::Impl::forward()
 
     constexpr Float ForwardSafety = 0.99;
 
-    context.proximity_distances.fill(context.remaining_search_bound);
+    bool self_collision_enabled =
+        !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
+
+    // Per-vertex default proximity: the remaining safe-search distance for
+    // each vertex, bounded by the tighter of the two independently-tracked
+    // search systems (obstacle PH and self-collision PT/EE).
+    {
+        using namespace muda;
+        ParallelFor()
+            .file_line(__FILE__, __LINE__)
+            .apply(context.x.size(),
+                   [remaining_obstacle =
+                        context.remaining_obstacle_search_bounds.viewer().name(
+                            "remaining_obstacle_search_bounds"),
+                    remaining_self =
+                        context.remaining_self_collision_search_bounds.viewer().name(
+                            "remaining_self_collision_search_bounds"),
+                    proximity =
+                        context.proximity_distances.viewer().name("proximity_distances"),
+                    self_collision_enabled] __device__(int i) mutable
+                   {
+                       Float bound = remaining_obstacle(i);
+                       if(self_collision_enabled)
+                       {
+                           Float self_bound = remaining_self(i);
+                           if(self_bound < bound)
+                               bound = self_bound;
+                       }
+                       proximity(i) = bound;
+                   });
+    }
     context.proximity_constraint_ids.fill(-1);
     context.diagnostics.forward.safe_step_alphas.fill(1.0);
 
@@ -174,7 +204,14 @@ void GlobalTWP::Impl::forward()
                 constraint_types = constraints.types.viewer().name("constraint_types"),
                 safe_step_alphas =
                     context.diagnostics.forward.safe_step_alphas.viewer().name(
-                        "safe_step_alphas")] __device__(int i) mutable
+                        "safe_step_alphas"),
+                remaining_obstacle =
+                    context.remaining_obstacle_search_bounds.viewer().name(
+                        "remaining_obstacle_search_bounds"),
+                remaining_self =
+                    context.remaining_self_collision_search_bounds.viewer().name(
+                        "remaining_self_collision_search_bounds"),
+                self_collision_enabled] __device__(int i) mutable
                {
                    Vector3 old_x = x(i);
                    Vector3 dir   = y(i) - old_x;
@@ -204,8 +241,24 @@ void GlobalTWP::Impl::forward()
                    Vector3 new_x = old_x + step;
                    x(i)          = new_x;
                    residual(i) *= (1.0 - alpha_i);
-                   forward_step_norms(i) = step.norm();
+                   Float step_norm_i = step.norm();
+                   forward_step_norms(i) = step_norm_i;
                    limited_flags(i) = alpha_i < 1.0 ? 1 : 0;
+
+                   // Deplete per-vertex remaining search bounds so that
+                   // the next outer iteration uses the exact distance each
+                   // vertex actually travelled rather than a global maximum.
+                   Float obs_bound = remaining_obstacle(i) - step_norm_i;
+                   remaining_obstacle(i) = obs_bound > Float{0.0} ? obs_bound : Float{0.0};
+                   if(self_collision_enabled)
+                   {
+                       // Self-collision pair distance can change by up to 2x
+                       // the vertex displacement (both sides of a pair may move).
+                       Float self_bound =
+                           remaining_self(i) - Float{2.0} * step_norm_i;
+                       remaining_self(i) =
+                           self_bound > Float{0.0} ? self_bound : Float{0.0};
+                   }
                });
 
     DeviceReduce().Min(context.diagnostics.forward.safe_step_alphas.data(),
@@ -220,6 +273,18 @@ void GlobalTWP::Impl::forward()
     DeviceReduce().Sum(context.diagnostics.forward.limited_flags.data(),
                        context.diagnostics.forward.limited_count.data(),
                        context.diagnostics.forward.limited_flags.size());
+
+    DeviceReduce().Min(
+        context.remaining_obstacle_search_bounds.data(),
+        context.min_remaining_obstacle_search_bound.data(),
+        context.remaining_obstacle_search_bounds.size());
+    if(self_collision_enabled)
+    {
+        DeviceReduce().Min(
+            context.remaining_self_collision_search_bounds.data(),
+            context.min_remaining_self_collision_search_bound.data(),
+            context.remaining_self_collision_search_bounds.size());
+    }
 
     context.diagnostics.forward.residual_inf     = context.diagnostics.forward.max_residual;
     context.diagnostics.forward.max_step = context.diagnostics.forward.max_step_norm;

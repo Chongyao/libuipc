@@ -38,7 +38,9 @@ class GlobalTWP final : public SimSystem
         Float compute_full_step_toi();
         void reset_algorithm_state();
         void prepare_edge_reference_length_squares();
-        void proximity_search(Float search_bound);
+        void proximity_search(Float obstacle_search_bound,
+                              Float self_collision_search_bound,
+                              bool  refresh_self_collision);
         void refresh_self_collision_candidates(Float search_bound);
         void append_simplex_contact_constraints(Float search_bound);
         void refresh_edge_constraints();

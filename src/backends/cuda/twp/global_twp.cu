@@ -324,14 +324,41 @@ void GlobalTWP::Impl::project()
     bool   nonfinite = false;
     IndexT step_count = 0;
     IndexT abnormal_debug_count = 0;
+    bool   self_collision_enabled =
+        !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
+    bool   self_collision_search_attempted = false;
     for(IndexT l = 0; l <= max_iter; ++l)
     {
         step_count = l + 1;
 
-        if(context.remaining_search_bound < d_min)
+        Float min_obstacle_bound =
+            context.min_remaining_obstacle_search_bound;
+        Float min_self_collision_bound =
+            context.min_remaining_self_collision_search_bound;
+        bool refresh_obstacle_contacts =
+            min_obstacle_bound < d_min;
+        bool refresh_self_collision_contacts =
+            self_collision_enabled
+            && min_self_collision_bound < d_min;
+        if(refresh_obstacle_contacts || refresh_self_collision_contacts)
         {
-            proximity_search(d_max);
-            context.remaining_search_bound = d_max;
+            if(refresh_obstacle_contacts)
+                context.remaining_obstacle_search_bounds.fill(d_max);
+            if(refresh_self_collision_contacts)
+                context.remaining_self_collision_search_bounds.fill(d_max);
+
+            bool had_self_contact =
+                constraints.host_self_contact_constraint_count() > 0;
+            // When a projection is PH-only, repeated outer iterations should not
+            // rebuild the self-collision BVH just because the obstacle search
+            // radius was consumed. Try self-collision once per project, then
+            // continue refreshing it only after PT/EE constraints become active.
+            bool refresh_self_collision_candidates =
+                refresh_self_collision_contacts
+                && (!self_collision_search_attempted || had_self_contact);
+            proximity_search(d_max, d_max, refresh_self_collision_candidates);
+            if(refresh_self_collision_candidates)
+                self_collision_search_attempted = true;
         }
 
         refresh_edge_constraints();
@@ -368,8 +395,6 @@ void GlobalTWP::Impl::project()
                 ++abnormal_debug_count;
             }
         }
-
-        context.remaining_search_bound -= 2.0 * context.diagnostics.forward.max_step;
 
         if(context.diagnostics.forward.residual_inf < eps)
         {

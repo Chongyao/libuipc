@@ -75,6 +75,8 @@ void TWPContext::ensure_storage(SizeT vertex_count)
     residual.resize(vertex_count);
     proximity_distances.resize(vertex_count);
     proximity_constraint_ids.resize(vertex_count);
+    remaining_obstacle_search_bounds.resize(vertex_count);
+    remaining_self_collision_search_bounds.resize(vertex_count);
     diagnostics.ensure_vertex_storage(vertex_count);
 }
 
@@ -102,7 +104,10 @@ void TWPContext::reset(GlobalVertexManager& global_vertex_manager)
     proximity_constraint_ids.fill(-1);
     diagnostics.reset();
 
-    remaining_search_bound = 0.0;
+    remaining_obstacle_search_bounds.fill(0.0);
+    remaining_self_collision_search_bounds.fill(0.0);
+    min_remaining_obstacle_search_bound = 0.0;
+    min_remaining_self_collision_search_bound = 0.0;
 }
 
 }  // namespace uipc::backend::cuda

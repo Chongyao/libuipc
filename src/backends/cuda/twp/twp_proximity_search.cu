@@ -23,7 +23,9 @@ void GlobalTWP::Impl::refresh_self_collision_candidates(Float search_bound)
     global_vertex_manager->restore_ccd();
 }
 
-void GlobalTWP::Impl::proximity_search(Float search_bound)
+void GlobalTWP::Impl::proximity_search(Float obstacle_search_bound,
+                                       Float self_collision_search_bound,
+                                       bool  refresh_self_collision)
 {
     Timer timer{"TWP Proximity Search"};
 
@@ -31,8 +33,8 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
 
     bool self_collision_enabled =
         !self_collision_enable_attr || self_collision_enable_attr->view()[0] != 0;
-    if(self_collision_enabled)
-        refresh_self_collision_candidates(search_bound);
+    if(self_collision_enabled && refresh_self_collision)
+        refresh_self_collision_candidates(self_collision_search_bound);
 
     SizeT vertex_count = context.x.size();
     SizeT plane_count  = half_plane ? half_plane->positions().size() : 0;
@@ -82,7 +84,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                     plane_normals = half_plane->normals().viewer().name("plane_normals"),
                     plane_vertex_offset,
                     plane_count,
-                    search_bound] __device__(int v) mutable
+                    obstacle_search_bound] __device__(int v) mutable
                    {
                        if(v >= plane_vertex_offset && v < plane_vertex_offset + plane_count)
                            return;
@@ -107,7 +109,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
                            Float signed_dist = (x(v) - P).dot(N);
                            Float min_dist    = thicknesses(v);
 
-                           if(signed_dist < min_dist + search_bound)
+                           if(signed_dist < min_dist + obstacle_search_bound)
                            {
                                IndexT I = atomic_add(count.data(), 1);
                                write_vertex_half_plane_constraint(types,
@@ -129,7 +131,7 @@ void GlobalTWP::Impl::proximity_search(Float search_bound)
 
     IndexT obstacle_count = constraints.count;
     if(self_collision_enabled)
-        append_simplex_contact_constraints(search_bound);
+        append_simplex_contact_constraints(self_collision_search_bound);
     IndexT contact_count = constraints.count;
     constraints.set_host_contact_constraint_count(obstacle_count,
                                                   contact_count - obstacle_count);

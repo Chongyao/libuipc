@@ -84,7 +84,13 @@ struct TWPContext
     muda::DeviceBuffer<Float>   proximity_distances;
     muda::DeviceBuffer<IndexT>  proximity_constraint_ids;
 
-    Float remaining_search_bound = 0.0;
+    muda::DeviceBuffer<Float> remaining_obstacle_search_bounds;
+    muda::DeviceBuffer<Float> remaining_self_collision_search_bounds;
+    // Per-iteration device-side min of the above buffers, updated by
+    // forward() so the host can decide whether to refresh proximity
+    // search without an extra reduce in the outer loop.
+    muda::DeviceVar<Float> min_remaining_obstacle_search_bound;
+    muda::DeviceVar<Float> min_remaining_self_collision_search_bound;
 
     TWPDiagnostics diagnostics;
 
