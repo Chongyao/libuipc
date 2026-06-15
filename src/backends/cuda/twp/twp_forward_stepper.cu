@@ -1,4 +1,5 @@
 #include <twp/global_twp.h>
+#include <twp/global_twp_impl.h>
 #include <global_geometry/global_vertex_manager.h>
 #include <utils/distance/distance_flagged.h>
 #include <uipc/common/timer.h>

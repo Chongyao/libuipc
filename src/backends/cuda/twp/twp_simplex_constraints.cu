@@ -1,4 +1,5 @@
 #include <twp/global_twp.h>
+#include <twp/global_twp_impl.h>
 #include <collision_detection/simplex_trajectory_filter.h>
 #include <global_geometry/global_vertex_manager.h>
 #include <utils/codim_thickness.h>

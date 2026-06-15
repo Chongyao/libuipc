@@ -1,4 +1,5 @@
 #include <twp/global_twp.h>
+#include <twp/global_twp_impl.h>
 #include <global_geometry/global_simplicial_surface_manager.h>
 #include <uipc/common/timer.h>
 #include <muda/launch/parallel_for.h>

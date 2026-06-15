@@ -1,4 +1,5 @@
 #include <twp/global_twp.h>
+#include <twp/global_twp_impl.h>
 #include <pipeline/twp_pipeline_flag.h>
 #include <sim_engine.h>
 #include <global_geometry/global_vertex_manager.h>
@@ -11,6 +12,7 @@
 #include <implicit_geometry/half_plane.h>
 #include <implicit_geometry/half_plane_vertex_reporter.h>
 #include <collision_detection/vertex_half_plane_trajectory_filter.h>
+#include <twp/twp_debug_summary.h>
 #include <uipc/common/timer.h>
 #include <muda/atomic.h>
 #include <muda/launch/parallel_for.h>
@@ -39,6 +41,14 @@ namespace uipc::backend::cuda
 {
 REGISTER_SIM_SYSTEM(GlobalTWP);
 
+GlobalTWP::GlobalTWP(SimEngine& engine)
+    : SimSystem(engine)
+    , m_impl{make_unique<Impl>()}
+{
+}
+
+GlobalTWP::~GlobalTWP() = default;
+
 namespace
 {
 bool is_finite(const TWPBackwardDiagnostics& backward,
@@ -57,42 +67,42 @@ bool is_finite(const TWPBackwardDiagnostics& backward,
 void GlobalTWP::do_build()
 {
     require<TWPPipelineFlag>();
-    m_impl.global_vertex_manager    = require<GlobalVertexManager>();
-    m_impl.global_simplicial_surface_manager = find<GlobalSimplicialSurfaceManager>();
-    m_impl.global_trajectory_filter = find<GlobalTrajectoryFilter>();
-    m_impl.global_contact_manager   = find<GlobalContactManager>();
-    m_impl.finite_element_method    = find<FiniteElementMethod>();
-    m_impl.finite_element_vertex_reporter = find<FiniteElementVertexReporter>();
-    m_impl.half_plane               = find<HalfPlane>();
-    m_impl.half_plane_vertex_reporter = find<HalfPlaneVertexReporter>();
+    m_impl->global_vertex_manager    = require<GlobalVertexManager>();
+    m_impl->global_simplicial_surface_manager = find<GlobalSimplicialSurfaceManager>();
+    m_impl->global_trajectory_filter = find<GlobalTrajectoryFilter>();
+    m_impl->global_contact_manager   = find<GlobalContactManager>();
+    m_impl->finite_element_method    = find<FiniteElementMethod>();
+    m_impl->finite_element_vertex_reporter = find<FiniteElementVertexReporter>();
+    m_impl->half_plane               = find<HalfPlane>();
+    m_impl->half_plane_vertex_reporter = find<HalfPlaneVertexReporter>();
 
     auto& config = world().scene().config();
-    m_impl.max_iter_attr = config.find<IndexT>("contact/twp/max_iter");
-    m_impl.eps_attr      = config.find<Float>("contact/twp/eps");
-    m_impl.d_min_attr    = config.find<Float>("contact/twp/d_min");
-    m_impl.d_max_attr    = config.find<Float>("contact/twp/d_max");
-    m_impl.edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
-    m_impl.repulsion_stiffness_attr =
+    m_impl->max_iter_attr = config.find<IndexT>("contact/twp/max_iter");
+    m_impl->eps_attr      = config.find<Float>("contact/twp/eps");
+    m_impl->d_min_attr    = config.find<Float>("contact/twp/d_min");
+    m_impl->d_max_attr    = config.find<Float>("contact/twp/d_max");
+    m_impl->edge_sigma_attr = config.find<Float>("contact/twp/edge_sigma");
+    m_impl->repulsion_stiffness_attr =
         config.find<Float>("contact/twp/repulsion_stiffness");
-    m_impl.backward_max_iter_attr =
+    m_impl->backward_max_iter_attr =
         config.find<IndexT>("contact/twp/backward_max_iter");
-    m_impl.backward_check_convergence_attr =
+    m_impl->backward_check_convergence_attr =
         config.find<IndexT>("contact/twp/backward_check_convergence");
-    m_impl.self_collision_enable_attr =
+    m_impl->self_collision_enable_attr =
         config.find<IndexT>("contact/twp/self_collision_enable");
-    m_impl.self_contact_coloring_attr =
+    m_impl->self_contact_coloring_attr =
         config.find<IndexT>("contact/twp/self_contact_coloring");
-    m_impl.debug_attr    = config.find<IndexT>("contact/twp/debug");
+    m_impl->debug_attr    = config.find<IndexT>("contact/twp/debug");
 
     on_init_scene(
         [this]
         {
-            if(m_impl.global_trajectory_filter)
+            if(m_impl->global_trajectory_filter)
             {
-                m_impl.simplex_trajectory_filter =
-                    m_impl.global_trajectory_filter->find<SimplexTrajectoryFilter>();
-                m_impl.vertex_half_plane_trajectory_filter =
-                    m_impl.global_trajectory_filter->find<VertexHalfPlaneTrajectoryFilter>();
+                m_impl->simplex_trajectory_filter =
+                    m_impl->global_trajectory_filter->find<SimplexTrajectoryFilter>();
+                m_impl->vertex_half_plane_trajectory_filter =
+                    m_impl->global_trajectory_filter->find<VertexHalfPlaneTrajectoryFilter>();
             }
         });
     on_write_scene([this] { debug_log_state("retrieve"); });
@@ -446,16 +456,16 @@ void GlobalTWP::Impl::project()
 
 void GlobalTWP::init()
 {
-    m_impl.init();
+    m_impl->init();
 }
 
 void GlobalTWP::project()
 {
-    m_impl.project();
+    m_impl->project();
 }
 
 void GlobalTWP::debug_log_state(std::string_view stage)
 {
-    m_impl.debug_log_state(stage);
+    m_impl->debug_log_state(stage);
 }
 }  // namespace uipc::backend::cuda
