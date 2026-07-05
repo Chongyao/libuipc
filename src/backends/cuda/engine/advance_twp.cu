@@ -138,10 +138,6 @@ void SimEngine::advance_twp()
         auto newton_max = m_newton_max_iter->view()[0];
         if(newton_iter_after_loop >= newton_max)
         {
-            logger::warn("Newton Iteration Exits with Max Iteration: {} (Frame={})",
-                         newton_max,
-                         m_current_frame);
-
             if(m_strict_mode->view()[0])
             {
                 throw SimEngineException("StrictMode: Newton Iteration Exits with Max Iteration");

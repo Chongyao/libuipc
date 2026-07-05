@@ -62,6 +62,15 @@ add_custom_target(sync_pyuipc_package
 )
 add_dependencies(sync_pyuipc_package pyuipc uipc::backends)
 
+add_custom_target(install_pyuipc_package
+    COMMAND ${UIPC_PYTHON_EXECUTABLE_PATH}
+            -m pip install --no-build-isolation --no-deps --force-reinstall
+            "${CMAKE_BINARY_DIR}/python"
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    COMMENT "Installing synchronized pyuipc package into the current Python environment"
+)
+add_dependencies(install_pyuipc_package sync_pyuipc_package)
+
 if(UIPC_BUILD_PYTHON_WHEEL)
     # UIPC_INSTALL_DIR is "uipc/_native"
     # Copy stubs to the install directory

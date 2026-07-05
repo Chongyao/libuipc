@@ -164,9 +164,9 @@ bool GlobalTWP::Impl::debug_enabled() const
     return debug_attr && debug_attr->view()[0] != 0;
 }
 
-void GlobalTWP::Impl::reset_algorithm_state()
+void GlobalTWP::Impl::reset_algorithm_state(Float start_toi)
 {
-    context.reset(*global_vertex_manager.view());
+    context.reset(*global_vertex_manager.view(), start_toi);
     constraints.clear();
     has_support_contact = false;
 }
@@ -322,7 +322,7 @@ void GlobalTWP::Impl::project()
     if(debug_enabled())
         logger::warn("TWP active: full-step CCD toi={}.", full_step_toi);
 
-    reset_algorithm_state();
+    reset_algorithm_state(full_step_toi);
     prepare_edge_reference_length_squares();
 
     const IndexT max_iter = max_iter_attr->view()[0];

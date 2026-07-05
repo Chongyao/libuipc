@@ -34,6 +34,6 @@ struct TWPContext
 
     void ensure_storage(SizeT vertex_count);
     void ensure_constraint_storage(SizeT constraint_capacity);
-    void reset(GlobalVertexManager& global_vertex_manager);
+    void reset(GlobalVertexManager& global_vertex_manager, Float start_toi = 0.0);
 };
 }  // namespace uipc::backend::cuda

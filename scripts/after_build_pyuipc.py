@@ -110,7 +110,7 @@ def generate_uipc_stubs(binary_dir):
 
     # generate the stubs
     print(f'Try generating stubs to {typings_dir}')
-    sys.path.append(str(typings_dir))
+    sys.path.insert(0, str(typings_dir))
     
     flush_info()
     
@@ -122,22 +122,21 @@ def generate_uipc_stubs(binary_dir):
         print(f'Error generating stubs: {e}')
         sys.exit(1)
 
-def uninstall_package():
-    # check if the package is installed
-    ret = sp.run([sys.executable, '-m', 'pip', 'show', 'pyuipc'], capture_output=True, text=True)
-    if ret.returncode == 0:
-        print(f'Uninstalling the old package:')
-        ret = sp.check_call([sys.executable, '-m', 'pip', 'uninstall', '-y', 'pyuipc'])
-        if ret != 0:
-            print(f'Error uninstalling package: {ret}')
-            sys.exit(1)
-
 def install_package(binary_dir):
-    ret = sp.check_call([sys.executable, '-m', 'pip', 'install', f'{binary_dir}/python'])
+    ret = sp.check_call([
+        sys.executable,
+        '-m',
+        'pip',
+        'install',
+        '--no-build-isolation',
+        '--no-deps',
+        '--force-reinstall',
+        f'{binary_dir}/python',
+    ])
     if ret != 0:
         print(f'''Automatically installing the package failed.
 Please install the package manually by running:
-{sys.executable} -m pip install {binary_dir}/python''')
+{sys.executable} -m pip install --no-build-isolation --no-deps --force-reinstall {binary_dir}/python''')
         sys.exit(1)
 
 if __name__ == '__main__':
@@ -148,6 +147,8 @@ if __name__ == '__main__':
     args.add_argument('--config', help='$<CONFIG>', required=True)
     args.add_argument('--build_type', help='CMAKE_BUILD_TYPE', required=True)
     args.add_argument('--build_wheel', help='UIPC_BUILD_PYTHON_WHEEL', required=True)
+    args.add_argument('--install', action='store_true',
+                      help='install the synchronized package into the current Python environment')
     args = args.parse_args()
 
     print(f'config($<CONFIG>): {args.config} | build_type(CMAKE_BUILD_TYPE): {args.build_type}')
@@ -155,10 +156,6 @@ if __name__ == '__main__':
     pyuipc_lib = pathlib.Path(args.target)
     binary_dir = pathlib.Path(args.binary_dir)
     proj_dir = pathlib.Path(args.project_dir)
-
-    # clean up the old package, avoid polluting the stub generation
-    print(f'Cleaning up the old package:')
-    uninstall_package()
 
     print(f'Clearing binary python directory: {binary_dir}')
     clear_binary_python_dir(binary_dir)
@@ -177,12 +174,15 @@ if __name__ == '__main__':
     generate_uipc_stubs(binary_dir)
     flush_info()
     
-    if not is_option_on(args.build_wheel):
+    if args.install and not is_option_on(args.build_wheel):
         print(f'Installing the package to Python Environment: {sys.executable}')
         install_package(binary_dir)
         flush_info()
-    else:
+    elif args.install:
         print(f'UIPC_BUILD_PYTHON_WHEEL is ON, skipping automatic pip install.')
-        print(f'To install manually, run:')
-        print(f'  {sys.executable} -m pip install {binary_dir}/python')
+        flush_info()
+    else:
+        print(f'Synchronized pyuipc package at: {binary_dir / "python"}')
+        print(f'To install into the current Python environment, run:')
+        print(f'  {sys.executable} -m pip install --no-build-isolation --no-deps --force-reinstall {binary_dir / "python"}')
         flush_info()

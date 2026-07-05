@@ -30,7 +30,7 @@ class GlobalTWP::Impl
 
     void ensure_storage(SizeT vertex_count);
     Float compute_full_step_toi();
-    void reset_algorithm_state();
+    void reset_algorithm_state(Float start_toi);
     void prepare_edge_reference_length_squares();
     void proximity_search(Float obstacle_search_bound,
                           Float self_collision_search_bound,
